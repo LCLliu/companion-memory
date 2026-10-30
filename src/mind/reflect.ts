@@ -8,7 +8,6 @@ import {
   createReflection,
   getMindState,
   getRelationship,
-  getRelationshipSnapshot,
   getSession,
   listRecentMessages,
   setRelationshipNumber,
@@ -175,8 +174,6 @@ export async function reflectSession(sessionId: string): Promise<ReflectSessionR
     if (recentMood !== undefined) {
       setRelationshipNumber(session.personId, 'recent_mood', recentMood, -1, 1)
     }
-    // 读一次快照，确保关系变化落盘后再返回（也为将来的返回值留位置）。
-    void getRelationshipSnapshot(session.personId)
 
     const intention = parsed.next_intention === null
       ? null

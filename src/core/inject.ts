@@ -1,4 +1,11 @@
-import { getRelationship, getRelationshipSnapshot, listMemories, listOpenLoops } from './store.ts'
+import {
+  getMemory,
+  getRelationship,
+  getRelationshipSnapshot,
+  listContradictions,
+  listMemories,
+  listOpenLoops,
+} from './store.ts'
 import type { Memory, RecallHit, SessionBrief } from './types.ts'
 
 const RELATION_LABELS: Record<string, string> = {
@@ -51,6 +58,16 @@ export function buildBrief(personId: string): SessionBrief {
     lines.push('【关系备注】')
     for (const entry of descriptive) {
       lines.push(`- ${RELATION_LABELS[entry.key] ?? entry.key}：${truncate(entry.value, 100)}`)
+    }
+  }
+  const contradictions = listContradictions(personId, 'pending', 5)
+  if (contradictions.length > 0) {
+    lines.push('【待核对的记忆】')
+    for (const item of contradictions) {
+      const a = getMemory(item.aMemoryId)
+      const b = getMemory(item.bMemoryId)
+      if (a === undefined || b === undefined) continue
+      lines.push(`- [${a.id}] ${truncate(a.text, 50)} ⇄ [${b.id}] ${truncate(b.text, 50)}：${item.reason}`)
     }
   }
   if (openLoops.length > 0) {

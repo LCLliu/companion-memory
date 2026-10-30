@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "长期陪伴型记忆系统 · 文本慢想 Phase 2",
+  "description": "长期陪伴型记忆系统 · 文本慢想 Phase 3",
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,magenta \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:api": "tsx watch src/server/index.ts",
@@ -11,7 +11,7 @@
     "build": "vite build",
     "start": "tsx src/server/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/store.test.ts tests/mind.test.ts"
+    "test": "node --import tsx --test tests/store.test.ts tests/mind.test.ts tests/maintenance.test.ts"
   },
   "dependencies": {
     "@fastify/static": "^8.2.0",

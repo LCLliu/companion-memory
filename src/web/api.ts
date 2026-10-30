@@ -1,5 +1,7 @@
 import type {
+  Contradiction,
   Intention,
+  MaintenanceRun,
   Memory,
   MemoryKind,
   Message,
@@ -46,6 +48,7 @@ export interface DebugItem {
   unresolved: number
   final: number
   selected: boolean
+  via: 'search' | 'edge'
 }
 
 export interface DebugResult {
@@ -141,6 +144,8 @@ export interface MindPayload {
   followUps: Intention[]
   relationship: Array<{ key: string; value: string; updatedAt: string }>
   relationshipSnapshot: RelationshipSnapshot
+  contradictions: Array<Contradiction & { aText: string; bText: string }>
+  maintenance: MaintenanceRun | null
 }
 
 export interface MindMeta {
@@ -168,6 +173,10 @@ export interface MindMeta {
     attention: string
     currentConcern: string
   }
+}
+
+export interface MaintenanceResponse {
+  run: MaintenanceRun
 }
 
 export interface MindPreview {

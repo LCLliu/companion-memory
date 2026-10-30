@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { getDb } from './db.ts'
 import type {
+  Contradiction,
+  Edge,
   Intention,
   IntentionKind,
   IntentionStatus,
+  MaintenanceRun,
   Memory,
   MemoryKind,
   MemoryStatus,
@@ -274,6 +277,8 @@ export interface CreateMemoryInput {
   unresolved?: boolean
   emotionalCharge?: number
   sourceThoughtId?: string | null
+  /** 仅导入/测试用；正常写入使用当前时间。 */
+  createdAt?: string
 }
 
 export function createMemory(input: CreateMemoryInput): Memory {
@@ -281,6 +286,7 @@ export function createMemory(input: CreateMemoryInput): Memory {
   if (text === '') throw new Error('记忆内容不能为空')
   const id = nextId('m')
   const at = nowIso()
+  const createdAt = input.createdAt ?? at
   getDb()
     .prepare(
       `INSERT INTO memory(
@@ -295,7 +301,7 @@ export function createMemory(input: CreateMemoryInput): Memory {
       input.kind,
       input.level ?? 1,
       text,
-      input.occurredAt ?? at,
+      input.occurredAt ?? createdAt,
       input.validFrom ?? null,
       input.validTo ?? null,
       input.valence ?? 0,
@@ -309,7 +315,7 @@ export function createMemory(input: CreateMemoryInput): Memory {
       input.unresolved === true ? 1 : 0,
       input.emotionalCharge ?? 0,
       input.sourceThoughtId ?? null,
-      at,
+      createdAt,
     )
   return getMemory(id)!
 }
@@ -967,4 +973,182 @@ export function expireIntentions(now = new Date(), graceDays = 14): number {
     )
     .run(cutoff)
   return Number(result.changes)
+}
+
+// ── 联想边 / 矛盾 / 维护 ─────────────────────────────────────
+
+function rowToEdge(row: any): Edge {
+  return {
+    srcMemoryId: String(row.src_memory_id),
+    dstMemoryId: String(row.dst_memory_id),
+    relation: String(row.relation),
+    weight: Number(row.weight),
+    createdAt: String(row.created_at),
+  }
+}
+
+export function clearEdges(personId = PERSON_ID): void {
+  getDb().prepare('DELETE FROM edge WHERE person_id = ?').run(personId)
+}
+
+export function insertEdge(input: {
+  personId?: string
+  srcMemoryId: string
+  dstMemoryId: string
+  relation: string
+  weight: number
+}): boolean {
+  const result = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO edge(person_id, src_memory_id, dst_memory_id, relation, weight, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.personId ?? PERSON_ID,
+      input.srcMemoryId,
+      input.dstMemoryId,
+      input.relation,
+      clamp(input.weight, 0, 1),
+      nowIso(),
+    )
+  return Number(result.changes) > 0
+}
+
+export function listEdges(personId = PERSON_ID, limit = 1000): Edge[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM edge WHERE person_id = ? ORDER BY weight DESC LIMIT ?')
+    .all(personId, limit) as any[]
+  return rows.map(rowToEdge)
+}
+
+export interface MemoryNeighbor {
+  memory: Memory
+  relation: string
+  weight: number
+}
+
+export function neighborsOf(memoryId: string, limit = 5): MemoryNeighbor[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM edge
+       WHERE src_memory_id = ? OR dst_memory_id = ?
+       ORDER BY weight DESC LIMIT ?`,
+    )
+    .all(memoryId, memoryId, Math.max(1, Math.min(limit, 20))) as any[]
+  const out: MemoryNeighbor[] = []
+  for (const row of rows) {
+    const otherId = String(row.src_memory_id) === memoryId
+      ? String(row.dst_memory_id)
+      : String(row.src_memory_id)
+    const memory = getMemory(otherId)
+    if (memory === undefined || memory.status !== 'active') continue
+    out.push({ memory, relation: String(row.relation), weight: Number(row.weight) })
+  }
+  return out
+}
+
+function rowToContradiction(row: any): Contradiction {
+  return {
+    id: Number(row.id),
+    personId: String(row.person_id),
+    aMemoryId: String(row.a_memory_id),
+    bMemoryId: String(row.b_memory_id),
+    reason: String(row.reason),
+    status: String(row.status) as Contradiction['status'],
+    createdAt: String(row.created_at),
+  }
+}
+
+export function clearContradictions(personId = PERSON_ID): void {
+  getDb().prepare('DELETE FROM contradiction WHERE person_id = ?').run(personId)
+}
+
+export function insertContradiction(input: {
+  personId?: string
+  aMemoryId: string
+  bMemoryId: string
+  reason: string
+}): boolean {
+  const [a, b] = [input.aMemoryId, input.bMemoryId].sort()
+  const result = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO contradiction(person_id, a_memory_id, b_memory_id, reason, status, created_at)
+       VALUES (?, ?, ?, ?, 'pending', ?)`,
+    )
+    .run(input.personId ?? PERSON_ID, a, b, input.reason, nowIso())
+  return Number(result.changes) > 0
+}
+
+export function listContradictions(
+  personId = PERSON_ID,
+  status: Contradiction['status'] | 'all' = 'pending',
+  limit = 20,
+): Contradiction[] {
+  const rows =
+    status === 'all'
+      ? (getDb()
+          .prepare('SELECT * FROM contradiction WHERE person_id = ? ORDER BY created_at DESC LIMIT ?')
+          .all(personId, limit) as any[])
+      : (getDb()
+          .prepare(
+            'SELECT * FROM contradiction WHERE person_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?',
+          )
+          .all(personId, status, limit) as any[])
+  return rows.map(rowToContradiction)
+}
+
+export function dismissContradiction(id: number): boolean {
+  const result = getDb()
+    .prepare("UPDATE contradiction SET status = 'dismissed' WHERE id = ? AND status = 'pending'")
+    .run(id)
+  return Number(result.changes) > 0
+}
+
+function rowToMaintenance(row: any): MaintenanceRun {
+  return {
+    id: Number(row.id),
+    personId: String(row.person_id),
+    at: String(row.at),
+    trigger: String(row.trigger),
+    scanned: Number(row.scanned),
+    archived: Number(row.archived),
+    edges: Number(row.edges),
+    contradictions: Number(row.contradictions),
+    expiredIntentions: Number(row.expired_intentions),
+    thoughtsPruned: Number(row.thoughts_pruned),
+    report: String(row.report),
+  }
+}
+
+export function recordMaintenance(input: Omit<MaintenanceRun, 'id'>): MaintenanceRun {
+  const result = getDb()
+    .prepare(
+      `INSERT INTO maintenance_run(
+        person_id, at, trigger, scanned, archived, edges, contradictions,
+        expired_intentions, thoughts_pruned, report
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.personId,
+      input.at,
+      input.trigger,
+      input.scanned,
+      input.archived,
+      input.edges,
+      input.contradictions,
+      input.expiredIntentions,
+      input.thoughtsPruned,
+      input.report,
+    )
+  const row = getDb()
+    .prepare('SELECT * FROM maintenance_run WHERE id = ?')
+    .get(Number(result.lastInsertRowid)) as any
+  return rowToMaintenance(row)
+}
+
+export function lastMaintenance(personId = PERSON_ID): MaintenanceRun | undefined {
+  const row = getDb()
+    .prepare('SELECT * FROM maintenance_run WHERE person_id = ? ORDER BY at DESC, id DESC LIMIT 1')
+    .get(personId) as any
+  return row === undefined ? undefined : rowToMaintenance(row)
 }

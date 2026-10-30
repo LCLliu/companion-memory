@@ -1,10 +1,12 @@
-# Companion Memory · Phase 2（文本慢想 + 关系）
+# Companion Memory · Phase 3（文本慢想 + 关系 + 巩固）
 
-一个**本地长期陪伴记忆 + 认知循环**的 Web 应用：聊天 + SQLite 记忆 + 每轮检索注入 + 慢想路由 + 会话反思 + 关系状态 + 到期意图 follow-up。
+一个**本地长期陪伴记忆 + 认知循环**的 Web 应用：聊天 + SQLite 记忆 + 每轮检索注入 + 慢想路由 + 会话反思 + 关系状态 + 到期意图 follow-up + 夜间巩固 + 1 跳联想 + 矛盾检查。
 
-当前是 Phase 2：**纯文本优先**；多模态只预留接口（见 [DESIGN.md](DESIGN.md) 13.5），QQ / 多用户推迟。
+当前是 Phase 3：**纯文本优先**；多模态只预留接口（见 [DESIGN.md](DESIGN.md) 13.5），QQ / 多用户推迟。
 
-![Phase 2](docs/screenshot-phase2.png)
+![Phase 2 界面](docs/screenshot-phase2.png)
+
+> 截图是 Phase 2 联调时拍的；Phase 3 新增的“维护 / 需要核对”在内心页签底部。
 
 > 截图是本地联调时用临时 stub 模型和测试数据拍的；正式使用时数据库从空白开始。
 
@@ -68,6 +70,9 @@ pnpm start
 - **情绪评估**：每轮慢想记录“她感觉到的你”，轻微影响她的心情；不把一次情绪写成永久人格。
 - **到期 follow-up**：意图到期后，新会话顶部出现“想问你”卡片；你开口时她自然提起，每天最多一次，不单独推送。
 - **显式强化**：检索只读；记忆详情里的“确认重要”才增加强化次数，避免“查得越多越难忘”。
+- **夜间维护**：启动或每 24 小时自动跑一次，也可在“内心 → 维护”手动执行；归档超过 14 天且权重低于阈值的 episode，不动 pinned 和 fact。
+- **1 跳联想**：维护时按主题相似度建 `same_topic` 边；检索从最强种子扩展 1 跳，调试面板标“联想”。
+- **矛盾检查**：相似但极性相反的事实/偏好会进入“需要核对”，聊天的记忆块也会带警告，不会自动覆盖任何一条。
 - **手动记忆**：右下角“记住这条”，支持类型、置顶；包含关系自动去重。
 - **记忆管理**：列表、类型/状态筛选、搜索、详情、来源对话、置顶、归档、恢复、彻底删除。
 - **未完成事项**：列表、关闭、手动添加。
@@ -99,6 +104,7 @@ pnpm start
 7. 打开“检索调试”，输入同一句话，能看到相关度/新近/重要性/情绪；点“查看拼装后的注入块”核对格式。
 8. 在记忆详情点“确认重要”，强化次数 +1；再归档一条记忆，检索调试里确认它不再出现，恢复后重新出现。
 9. 在“内心 → 路由预览”输入“你好呀”应显示快速回应，输入“我今天真的很累”应显示会慢想。
+10. 在“内心 → 维护”点“立即整理”，应看到扫描/归档/联想/矛盾计数；如果有相似但极性相反的记忆，会在“需要核对”里出现，可点“忽略”。
 
 ## 数据与隐私
 
@@ -113,12 +119,13 @@ pnpm start
 ```
 src/
   core/
-    db.ts        SQLite schema / FTS5 / WAL / 迁移
-    store.ts     会话、消息、记忆、未完成、关系、mind_state/thought/reflection/intention
-    retrieve.ts  trigram 分词、FTS5 检索、情绪/强化打分
-    inject.ts    会话简报、记忆块、系统提示词
-    extract.ts   LLM 抽取 + zod 校验 + 来源校验 + 入库
-    llm.ts       OpenAI 兼容客户端（流式 / JSON）
+    db.ts          SQLite schema / FTS5 / WAL / 迁移
+    store.ts       会话、消息、记忆、未完成、关系、mind_state/thought/reflection/intention/edge/矛盾
+    retrieve.ts    trigram 分词、FTS5 检索、情绪/强化打分、1 跳联想
+    inject.ts      会话简报、记忆块、系统提示词、冲突警告
+    maintenance.ts 衰减归档、边重建、矛盾检测、维护报告
+    extract.ts     LLM 抽取 + zod 校验 + 来源校验 + 入库
+    llm.ts         OpenAI 兼容客户端（流式 / JSON）
   mind/
     perceive.ts  感知 + 快慢路由
     deliberate.ts 隐藏斟酌（JSON 计划）
@@ -133,8 +140,9 @@ src/
     api.ts       前端 API 封装
     styles.css   深色界面
 tests/
-  store.test.ts  检索、注入、归档、去重、会话计数
-  mind.test.ts   强化、mind_state、关系状态、appraisal、意图到期、路由
+  store.test.ts       检索、注入、归档、去重、会话计数
+  mind.test.ts        强化、mind_state、关系状态、appraisal、意图到期、路由
+  maintenance.test.ts 衰减归档、联想边、矛盾检测、维护幂等
 ```
 
 ## 测试
@@ -145,20 +153,21 @@ pnpm test
 pnpm build
 ```
 
-当前 18 个单元测试全部通过；构建产物在 `dist/web`。
+当前 22 个单元测试全部通过；构建产物在 `dist/web`。
 
 ## 验证记录（2026-10-30）
 
-- `pnpm typecheck`、`pnpm test`（18 项）、`pnpm build` 全部通过。
-- 浏览器里实际验证过：新建会话、流式聊天、慢想标记、情绪评估、关系状态、到期 follow-up 卡片、结束并反思、内心面板、意图完成、路由预览、确认重要、归档/恢复、检索调试、注入块预览。
+- `pnpm typecheck`、`pnpm test`（22 项）、`pnpm build` 全部通过。
+- 浏览器里实际验证过：新建会话、流式聊天、慢想标记、情绪评估、关系状态、到期 follow-up、结束并反思、内心面板、意图完成、路由预览、确认重要、归档/恢复、维护报告、矛盾核对、检索调试、注入块预览。
 - 慢想/反思/follow-up 是用**临时本地 stub 模型**验证的，覆盖 `MIND_MODE=on` 与 `shadow` 两条路径；真实智谱 API 没有跑过。填好 `.env` 后按上面「怎么验证」走一遍即可确认。
+- 维护/联想/矛盾是纯规则逻辑，不需要模型；已验证老 episode 归档、pinned/fact 不动、边检索、极性矛盾检测、重复维护幂等。
 
-## Phase 2 明确不做
+## Phase 3 明确不做
 
 - 人设 / 人设蒸馏（后续）
 - 向量检索 / embedding（先用 FTS5）
-- 夜间定时巩固 / 衰减归档（Phase 3）
-- 冲突裁决 UI（数据库有 status 字段，界面未做）
+- LLM 生成的章节摘要/自我叙事（当前维护是确定性规则）
+- 冲突裁决 UI（只显示警告和“忽略”，未做逐条裁决）
 - 多模态上传 / ASR / TTS（只预留接口，见 DESIGN.md 13.5）
 - 多用户 / QQ 官方 Bot（推迟）
 - 记忆导出 Markdown / Obsidian
@@ -167,6 +176,5 @@ pnpm build
 
 完整设计见 [DESIGN.md](DESIGN.md)（慢思认知循环）；Phase 0 的历史设计见 [docs/PHASE0-DESIGN.md](docs/PHASE0-DESIGN.md)。
 
-- Phase 3：夜间巩固 + 衰减归档 + 1 跳联想 + 元认知。
-- Phase 4：Web 文本版收尾 + 评测。
+- Phase 4：Web 文本版收尾 + 评测（20–30 条记忆探针 + 慢思考探针）。
 - 预留：多模态（见 DESIGN.md 13.5）；QQ 与多用户推迟。

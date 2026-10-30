@@ -1,5 +1,5 @@
 import { getDb } from './db.ts'
-import { getMemory } from './store.ts'
+import { getMemory, neighborsOf } from './store.ts'
 import type { Memory, RecallHit, RetrievalResult } from './types.ts'
 
 const CANDIDATE_LIMIT = 60
@@ -101,6 +101,7 @@ function scoreCandidates(candidates: Candidate[], nowMs: number): RecallHit[] {
         unresolved,
         pinned: memory.pinned,
         final,
+        via: 'search' as const,
       }
     })
     .sort((a, b) => b.final - a.final || b.memory.accessCount - a.memory.accessCount)
@@ -128,6 +129,30 @@ export function retrieve(
   }
 
   const hits = scoreCandidates(candidates, Date.now()).slice(0, options.candidateLimit ?? 20)
+
+  // 1 跳联想：从最强的几个种子出发，带出弱相关的邻居；权重减半，不能压过直接命中。
+  const known = new Set(hits.map((hit) => hit.memory.id))
+  for (const seed of hits.slice(0, 3)) {
+    for (const neighbor of neighborsOf(seed.memory.id, 3)) {
+      if (known.has(neighbor.memory.id)) continue
+      known.add(neighbor.memory.id)
+      hits.push({
+        memory: neighbor.memory,
+        bm25: 0,
+        norm: 0,
+        recency: 0,
+        salience: neighbor.memory.salience,
+        emotion: 0,
+        reinforcement: 0,
+        unresolved: 0,
+        pinned: neighbor.memory.pinned,
+        final: seed.final * 0.5 * neighbor.weight,
+        via: 'edge',
+      })
+    }
+  }
+  hits.sort((a, b) => b.final - a.final)
+
   return {
     query,
     mode,

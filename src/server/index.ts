@@ -25,6 +25,7 @@ import {
   createOpenLoop,
   createSession,
   deleteMemory,
+  dismissContradiction,
   expireIntentions,
   findExistingMemory,
   getLastUserMessageId,
@@ -33,6 +34,8 @@ import {
   getRelationship,
   getRelationshipSnapshot,
   getSession,
+  lastMaintenance,
+  listContradictions,
   listDueIntentions,
   listIntentions,
   listMemories,
@@ -50,6 +53,7 @@ import {
   stats,
   updateMindState,
 } from '../core/store.ts'
+import { runMaintenance } from '../core/maintenance.ts'
 import type { MemoryKind, MemoryStatus, OpenLoopKind } from '../core/types.ts'
 import { appraiseTurn, blendMindState } from '../mind/appraise.ts'
 import { deliberatePlan, type DeliberationPlan } from '../mind/deliberate.ts'
@@ -77,7 +81,7 @@ function configView() {
     extractModel: extractModel(),
     keyConfigured: isKeyConfigured(),
     dbPath: getDbPath(),
-    phase: 'Phase 2 · 文本慢想 + 关系',
+    phase: 'Phase 3 · 巩固与联想',
     mindMode: mindMode(),
     mindModel: mindModel(),
   }
@@ -304,6 +308,7 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
         reinforcement: Number(hit.reinforcement.toFixed(4)),
         unresolved: Number(hit.unresolved.toFixed(4)),
         final: Number(hit.final.toFixed(4)),
+        via: hit.via,
       })),
     },
     brief: brief.text,
@@ -495,6 +500,11 @@ app.post('/api/open-loops/:id/close', async (request, reply) => {
 
 app.get('/api/mind', async () => {
   expireIntentions()
+  const contradictions = listContradictions('p-0001', 'pending', 20).map((item) => ({
+    ...item,
+    aText: getMemory(item.aMemoryId)?.text ?? '（已不存在）',
+    bText: getMemory(item.bMemoryId)?.text ?? '（已不存在）',
+  }))
   return {
     ok: true,
     mode: mindMode(),
@@ -506,7 +516,22 @@ app.get('/api/mind', async () => {
     followUps: listDueIntentions(),
     relationship: getRelationship(),
     relationshipSnapshot: getRelationshipSnapshot(),
+    contradictions,
+    maintenance: lastMaintenance() ?? null,
   }
+})
+
+app.post('/api/contradictions/:id/dismiss', async (request, reply) => {
+  const id = Number((request.params as { id: string }).id)
+  if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ ok: false, message: '无效 id' })
+  const ok = dismissContradiction(id)
+  if (!ok) return reply.code(404).send({ ok: false, message: '矛盾不存在或已处理' })
+  return { ok: true }
+})
+
+app.post('/api/maintenance/run', async () => {
+  const run = runMaintenance({ trigger: 'manual' })
+  return { ok: true, run }
 })
 
 app.post('/api/intentions/:id/done', async (request, reply) => {
@@ -541,6 +566,7 @@ app.get('/api/debug/recall', async (request) => {
       reinforcement: Number(hit.reinforcement.toFixed(4)),
       unresolved: Number(hit.unresolved.toFixed(4)),
       final: Number(hit.final.toFixed(4)),
+      via: hit.via,
       selected: result.selected.some((memory) => memory.id === hit.memory.id),
       sourceMessageIds: hit.memory.sourceMessageIds,
     })),
@@ -599,7 +625,24 @@ app.setErrorHandler((error: any, _request, reply) => {
   reply.code(status).send({ ok: false, message })
 })
 
+function maybeRunMaintenance(trigger: 'startup' | 'scheduled'): void {
+  try {
+    const last = lastMaintenance()
+    if (last !== undefined && Date.now() - Date.parse(last.at) < 86_400_000) return
+    const run = runMaintenance({ trigger })
+    app.log.info(
+      { trigger, scanned: run.scanned, archived: run.archived, edges: run.edges },
+      'maintenance complete',
+    )
+  } catch (error) {
+    app.log.warn({ err: messageOf(error), trigger }, 'maintenance failed')
+  }
+}
+
 await app.listen({ port: PORT, host: HOST })
 app.log.info(
   `companion-memory ready: http://${HOST}:${PORT} · model=${chatModel()} · mind=${mindMode()} · key=${isKeyConfigured() ? 'configured' : 'MISSING'}`,
 )
+void maybeRunMaintenance('startup')
+const maintenanceTimer = setInterval(() => maybeRunMaintenance('scheduled'), 3_600_000)
+maintenanceTimer.unref()

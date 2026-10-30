@@ -174,6 +174,42 @@ CREATE TABLE IF NOT EXISTS intention (
   completed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS edge (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id TEXT NOT NULL,
+  src_memory_id TEXT NOT NULL,
+  dst_memory_id TEXT NOT NULL,
+  relation TEXT NOT NULL,
+  weight REAL NOT NULL DEFAULT 0.5,
+  created_at TEXT NOT NULL,
+  UNIQUE(src_memory_id, dst_memory_id, relation)
+);
+
+CREATE TABLE IF NOT EXISTS contradiction (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id TEXT NOT NULL,
+  a_memory_id TEXT NOT NULL,
+  b_memory_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  UNIQUE(a_memory_id, b_memory_id)
+);
+
+CREATE TABLE IF NOT EXISTS maintenance_run (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id TEXT NOT NULL,
+  at TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  scanned INTEGER NOT NULL,
+  archived INTEGER NOT NULL,
+  edges INTEGER NOT NULL,
+  contradictions INTEGER NOT NULL,
+  expired_intentions INTEGER NOT NULL,
+  thoughts_pruned INTEGER NOT NULL,
+  report TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_memory_person_status ON memory(person_id, status);
 CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory(kind);
 CREATE INDEX IF NOT EXISTS idx_memory_pinned ON memory(pinned);
@@ -182,6 +218,10 @@ CREATE INDEX IF NOT EXISTS idx_open_loop_person_status ON open_loop(person_id, s
 CREATE INDEX IF NOT EXISTS idx_thought_person_created ON thought(person_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reflection_person_created ON reflection(person_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_intention_person_status_due ON intention(person_id, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_edge_person_src ON edge(person_id, src_memory_id);
+CREATE INDEX IF NOT EXISTS idx_edge_person_dst ON edge(person_id, dst_memory_id);
+CREATE INDEX IF NOT EXISTS idx_contradiction_person_status ON contradiction(person_id, status);
+CREATE INDEX IF NOT EXISTS idx_maintenance_person_at ON maintenance_run(person_id, at);
 `
 
 function ensureColumn(database: DatabaseSync, table: string, column: string, definition: string): void {

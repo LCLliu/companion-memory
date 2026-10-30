@@ -149,6 +149,38 @@ export interface Intention {
   completedAt: string | null
 }
 
+export interface Edge {
+  srcMemoryId: string
+  dstMemoryId: string
+  relation: string
+  weight: number
+  createdAt: string
+}
+
+export interface Contradiction {
+  id: number
+  personId: string
+  aMemoryId: string
+  bMemoryId: string
+  reason: string
+  status: 'pending' | 'dismissed' | 'resolved'
+  createdAt: string
+}
+
+export interface MaintenanceRun {
+  id: number
+  personId: string
+  at: string
+  trigger: string
+  scanned: number
+  archived: number
+  edges: number
+  contradictions: number
+  expiredIntentions: number
+  thoughtsPruned: number
+  report: string
+}
+
 export interface RelationshipSnapshot {
   trust: number
   familiarity: number
@@ -175,6 +207,7 @@ export interface RecallHit {
   unresolved: number
   pinned: boolean
   final: number
+  via: 'search' | 'edge'
 }
 
 export interface RetrievalResult {

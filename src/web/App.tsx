@@ -18,6 +18,7 @@ import {
   type DebugResult,
   type DetailResult,
   type ExtractResponse,
+  type MaintenanceResponse,
   type MindMeta,
   type MindPayload,
   type MindPreview,
@@ -660,6 +661,33 @@ export default function App() {
     }
   }
 
+  async function runMaintenanceNow(): Promise<void> {
+    if (busy !== null) return
+    setBusy('maintenance')
+    try {
+      const data = await post<MaintenanceResponse>('/api/maintenance/run')
+      notify(
+        `整理完成：归档 ${data.run.archived} 条 · 联想 ${data.run.edges} 条 · 新矛盾 ${data.run.contradictions} 条`,
+        'ok',
+      )
+      await refreshAll()
+    } catch (error) {
+      notify(errorText(error), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function dismissConflict(id: number): Promise<void> {
+    try {
+      await post(`/api/contradictions/${id}/dismiss`)
+      await refreshAll()
+      notify('已忽略这条冲突', 'ok')
+    } catch (error) {
+      notify(errorText(error), 'error')
+    }
+  }
+
   async function runDebug(): Promise<void> {
     if (debugQuery.trim() === '') return
     setDebugLoading(true)
@@ -1006,6 +1034,29 @@ export default function App() {
                   </div>
                 </div>
 
+                {mind.contradictions.length > 0 && (
+                  <>
+                    <h4 className="mind-h">需要核对</h4>
+                    <div className="conflict-list">
+                      {mind.contradictions.map((item) => (
+                        <div className="conflict-item" key={item.id}>
+                          <div className="conflict-pair">
+                            <span>{item.aText}</span>
+                            <span className="muted">⇄</span>
+                            <span>{item.bText}</span>
+                          </div>
+                          <div className="memory-foot">
+                            <span>{item.reason}</span>
+                            <button type="button" className="link" onClick={() => void dismissConflict(item.id)}>
+                              忽略
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 <h4 className="mind-h">最近的想法</h4>
                 {mind.thoughts.length === 0 && <p className="empty-small">慢路径触发后，这里会出现一句摘要。</p>}
                 <div className="thought-list">
@@ -1102,6 +1153,34 @@ export default function App() {
                     </p>
                   </div>
                 )}
+
+                <h4 className="mind-h">维护</h4>
+                <div className="maintenance-card">
+                  {mind.maintenance === null ? (
+                    <p className="empty-small">还没有运行过维护。</p>
+                  ) : (
+                    <>
+                      <div className="memory-line">
+                        <span className="badge trigger">{mind.maintenance.trigger}</span>
+                        <span className="memory-date">{fmt(mind.maintenance.at)}</span>
+                      </div>
+                      <div className="maintenance-stats">
+                        扫描 {mind.maintenance.scanned} · 归档 {mind.maintenance.archived}
+                        {' · '}联想 {mind.maintenance.edges}
+                        {' · '}新矛盾 {mind.maintenance.contradictions}
+                      </div>
+                      <pre className="maintenance-report">{mind.maintenance.report}</pre>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="ghost wide"
+                    onClick={() => void runMaintenanceNow()}
+                    disabled={busy !== null}
+                  >
+                    {busy === 'maintenance' ? '整理中…' : '立即整理'}
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -1135,6 +1214,7 @@ export default function App() {
                       <div className="memory-line">
                         <KindBadge kind={item.kind} />
                         {item.selected && <span className="badge injected">会注入</span>}
+                        {item.via === 'edge' && <span className="badge edge">联想</span>}
                         <span className="memory-date">{item.id}</span>
                       </div>
                       <p>{item.text}</p>

@@ -1223,6 +1223,70 @@ button:disabled {
   white-space: normal;
 }
 
+.conflict-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conflict-item {
+  border: 1px solid rgba(226, 121, 121, 0.3);
+  background: rgba(226, 121, 121, 0.05);
+  border-radius: 11px;
+  padding: 9px 11px;
+}
+
+.conflict-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e4c4c4;
+}
+
+.conflict-pair .muted {
+  color: var(--muted);
+}
+
+.badge.edge {
+  color: var(--teal);
+  background: rgba(132, 210, 196, 0.1);
+  border-color: rgba(132, 210, 196, 0.25);
+}
+
+.badge.trigger {
+  color: var(--muted);
+  background: rgba(142, 153, 173, 0.1);
+}
+
+.maintenance-card {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  border-radius: 11px;
+  padding: 10px 11px;
+}
+
+.maintenance-stats {
+  margin: 7px 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.maintenance-report {
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  background: #0d121b;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: #aeb9cc;
+  white-space: pre-wrap;
+}
+
 /* ── 响应式 ───────────────────────────────────────────── */
 
 @media (max-width: 1180px) {
