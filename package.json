@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "长期陪伴型记忆系统 · 文本慢想 Phase 1",
+  "description": "长期陪伴型记忆系统 · 文本慢想 Phase 2",
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,magenta \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:api": "tsx watch src/server/index.ts",

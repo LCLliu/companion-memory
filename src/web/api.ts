@@ -6,6 +6,7 @@ import type {
   MindState,
   OpenLoop,
   Reflection,
+  RelationshipSnapshot,
   Session,
   SessionBrief,
   Thought,
@@ -101,6 +102,7 @@ export interface SessionDetail {
   messages: Message[]
   brief: SessionBrief
   turnCount: number
+  followUp: Intention | null
 }
 
 export interface BriefResult {
@@ -136,7 +138,9 @@ export interface MindPayload {
   thoughts: Thought[]
   reflections: Reflection[]
   intentions: Intention[]
+  followUps: Intention[]
   relationship: Array<{ key: string; value: string; updatedAt: string }>
+  relationshipSnapshot: RelationshipSnapshot
 }
 
 export interface MindMeta {
@@ -149,6 +153,14 @@ export interface MindMeta {
     thoughtSummary: string
     confidence: number
   } | null
+  appraisal: {
+    label: string
+    valence: number
+    arousal: number
+    needs: string[]
+    summary: string
+  } | null
+  followUp: { id: string; text: string; dueAt: string | null } | null
   state: {
     moodValence: number
     moodArousal: number

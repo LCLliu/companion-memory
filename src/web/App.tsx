@@ -305,6 +305,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [brief, setBrief] = useState<SessionBrief | null>(null)
+  const [followUp, setFollowUp] = useState<Intention | null>(null)
   const [memories, setMemories] = useState<Memory[]>([])
   const [loops, setLoops] = useState<OpenLoop[]>([])
   const [tab, setTab] = useState<Tab>('memories')
@@ -381,6 +382,7 @@ export default function App() {
     setSession(data.session)
     setMessages(data.messages)
     setBrief(data.brief)
+    setFollowUp(data.followUp ?? null)
   }
 
   async function refreshAll(): Promise<void> {
@@ -412,11 +414,12 @@ export default function App() {
   async function newSession(): Promise<void> {
     if (streaming) return
     try {
-      const data = await post<{ session: Session; brief: SessionBrief }>('/api/sessions', {})
+      const data = await post<{ session: Session; brief: SessionBrief; followUp: Intention | null }>('/api/sessions', {})
       setSessions((prev) => [data.session, ...prev])
       setSession(data.session)
       setMessages([])
       setBrief(data.brief)
+      setFollowUp(data.followUp ?? null)
       setInjected([])
       setStreamText('')
     } catch (error) {
@@ -779,6 +782,14 @@ export default function App() {
         )}
 
         <div className="chat-scroll" ref={chatScrollRef}>
+          {followUp !== null && messages.length === 0 && !streaming && (
+            <div className="followup-card">
+              <span className="badge followup">想问你</span>
+              <p>{followUp.text}</p>
+              <span className="hint">会在你开口时自然提起，不会单独发消息</span>
+            </div>
+          )}
+
           {brief !== null && brief.text !== '' && (
             <details className="brief" open={messages.length === 0}>
               <summary>本次会话记忆简报</summary>
@@ -836,6 +847,12 @@ export default function App() {
                         : '影子慢想中（不影响回复）'
                       : '快速回应'}
                 </div>
+              )}
+              {mindMeta?.appraisal !== null && mindMeta?.appraisal !== undefined && (
+                <div className="mind-trace appraisal">她感觉到：{mindMeta.appraisal.label} · {mindMeta.appraisal.summary}</div>
+              )}
+              {mindMeta?.followUp !== null && mindMeta?.followUp !== undefined && (
+                <div className="mind-trace followup">她本来想问你：{mindMeta.followUp.text}</div>
               )}
             </div>
           )}
@@ -981,11 +998,12 @@ export default function App() {
                   {mind.state.currentConcern !== '' && (
                     <p className="muted">心里挂着：{mind.state.currentConcern}</p>
                   )}
-                  {mind.relationship.length > 0 && (
-                    <div className="mind-rel">
-                      关系：{mind.relationship.map((entry) => `${entry.key}=${entry.value}`).join('；')}
-                    </div>
-                  )}
+                  <div className="mind-rel">
+                    信任：{mind.relationshipSnapshot.labels.trust} · 熟悉：{mind.relationshipSnapshot.labels.familiarity}
+                    {' · '}张力：{mind.relationshipSnapshot.labels.tension}
+                    {' · '}最近感觉：{mind.relationshipSnapshot.labels.recentMood}
+                    {mind.relationshipSnapshot.tone !== '' ? ` · 基调：${mind.relationshipSnapshot.tone}` : ''}
+                  </div>
                 </div>
 
                 <h4 className="mind-h">最近的想法</h4>
@@ -1037,6 +1055,9 @@ export default function App() {
                     <div className="intention-item" key={intention.id}>
                       <div className="memory-line">
                         <span className="badge intention">{intention.kind}</span>
+                        {mind.followUps.some((item) => item.id === intention.id) && (
+                          <span className="badge followup">待提起</span>
+                        )}
                         <span className="memory-date">{intention.dueAt ? intention.dueAt.slice(0, 10) : '未定期'}</span>
                       </div>
                       <p>{intention.text}</p>

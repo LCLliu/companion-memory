@@ -1,5 +1,5 @@
 import { SYSTEM_RULES } from '../core/inject.ts'
-import type { MindState } from '../core/types.ts'
+import type { Intention, MindState } from '../core/types.ts'
 import type { DeliberationPlan } from './deliberate.ts'
 
 function moodLabel(state: MindState): string {
@@ -41,4 +41,14 @@ export function buildMindSystemPrompt(
   plan: DeliberationPlan | null,
 ): string {
   return `${SYSTEM_RULES}\n\n${buildMindExtra(mindState, plan)}\n\n${memoryBlock}`
+}
+
+export function buildFollowUpExtra(intention: Intention): string {
+  const due = intention.dueAt === null ? '' : `（原本约在 ${intention.dueAt.slice(0, 10)}）`
+  return [
+    '【本来想问你】',
+    `- 你之前记着：${intention.text}${due}`,
+    '- 如果这次对话里自然，可以问一句；不要生硬，不要提“意图 / 提醒 / 系统”。',
+    '- 如果用户正在说更重要的事，先不打断。',
+  ].join('\n')
 }

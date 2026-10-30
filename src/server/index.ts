@@ -17,6 +17,7 @@ import {
 import { retrieve } from '../core/retrieve.ts'
 import {
   addMessage,
+  claimIntentionSurface,
   closeOpenLoop,
   completeIntention,
   countUserMessages,
@@ -30,7 +31,9 @@ import {
   getMemory,
   getMindState,
   getRelationship,
+  getRelationshipSnapshot,
   getSession,
+  listDueIntentions,
   listIntentions,
   listMemories,
   listMessages,
@@ -45,13 +48,15 @@ import {
   setMemoryPinned,
   setMemoryStatus,
   stats,
+  updateMindState,
 } from '../core/store.ts'
 import type { MemoryKind, MemoryStatus, OpenLoopKind } from '../core/types.ts'
+import { appraiseTurn, blendMindState } from '../mind/appraise.ts'
 import { deliberatePlan, type DeliberationPlan } from '../mind/deliberate.ts'
-import { buildMindSystemPrompt } from '../mind/express.ts'
+import { buildFollowUpExtra, buildMindSystemPrompt } from '../mind/express.ts'
 import { routeMessage } from '../mind/perceive.ts'
 import { reflectSession } from '../mind/reflect.ts'
-import { recordPlanThought } from '../mind/thoughts.ts'
+import { recordAppraisalThought, recordPlanThought } from '../mind/thoughts.ts'
 
 const PORT = Number(process.env.PORT ?? 3210)
 const HOST = '127.0.0.1'
@@ -72,7 +77,7 @@ function configView() {
     extractModel: extractModel(),
     keyConfigured: isKeyConfigured(),
     dbPath: getDbPath(),
-    phase: 'Phase 1 · 文本慢想',
+    phase: 'Phase 2 · 文本慢想 + 关系',
     mindMode: mindMode(),
     mindModel: mindModel(),
   }
@@ -95,7 +100,12 @@ app.get('/api/sessions', async () => ({ items: listSessions() }))
 app.post('/api/sessions', async (request) => {
   const body = (request.body ?? {}) as { title?: string }
   const session = createSession(undefined, body.title)
-  return { ok: true, session, brief: buildBrief(session.personId) }
+  return {
+    ok: true,
+    session,
+    brief: buildBrief(session.personId),
+    followUp: listDueIntentions(session.personId)[0] ?? null,
+  }
 })
 
 app.get('/api/sessions/:id', async (request, reply) => {
@@ -108,6 +118,7 @@ app.get('/api/sessions/:id', async (request, reply) => {
     messages: listMessages(id),
     brief: buildBrief(session.personId),
     turnCount: countUserMessages(id),
+    followUp: listDueIntentions(session.personId)[0] ?? null,
   }
 })
 
@@ -150,6 +161,8 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
     })
   }
 
+  const priorUserMessages = countUserMessages(id)
+  const followUp = priorUserMessages === 0 ? (listDueIntentions(session.personId)[0] ?? null) : null
   const userMessage = addMessage(id, 'user', text)
   const brief = buildBrief(session.personId)
   const topK = Math.max(1, Number(process.env.RECALL_TOP_K ?? 3))
@@ -206,9 +219,14 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
       })
   }
 
-  const system = mode === 'off'
+  const appraisal = mode !== 'off' && route.slow
+    ? appraiseTurn(route.percept, plan)
+    : null
+
+  const baseSystem = mode === 'off'
     ? buildSystemPrompt(memoryBlock.text)
     : buildMindSystemPrompt(memoryBlock.text, mindState, plan)
+  const system = followUp === null ? baseSystem : `${baseSystem}\n\n${buildFollowUpExtra(followUp)}`
   const messages: ChatMsg[] = [
     { role: 'system', content: system },
     ...history.map((message) => ({
@@ -229,6 +247,18 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
           thoughtSummary: plan.thoughtSummary,
           confidence: plan.confidence,
         },
+    appraisal: appraisal === null
+      ? null
+      : {
+          label: appraisal.label,
+          valence: Number(appraisal.valence.toFixed(3)),
+          arousal: Number(appraisal.arousal.toFixed(3)),
+          needs: appraisal.needs,
+          summary: appraisal.summary,
+        },
+    followUp: followUp === null
+      ? null
+      : { id: followUp.id, text: followUp.text, dueAt: followUp.dueAt },
     state: {
       moodValence: mindState.moodValence,
       moodArousal: mindState.moodArousal,
@@ -297,6 +327,9 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
       autoExtract,
       autoReflect: autoExtract,
       injectedIds: memoryBlock.injectedIds,
+      followUp: followUp === null
+        ? null
+        : { id: followUp.id, text: followUp.text, dueAt: followUp.dueAt },
       mind: {
         mode,
         slow: route.slow,
@@ -310,6 +343,21 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
         recordPlanThought({ sessionId: id, turnMessageId: userMessage.id, plan })
       } catch (error) {
         app.log.warn({ err: messageOf(error), sessionId: id }, 'record thought failed')
+      }
+    }
+    if (appraisal !== null) {
+      try {
+        recordAppraisalThought({ sessionId: id, turnMessageId: userMessage.id, appraisal })
+        updateMindState(session.personId, blendMindState(mindState, appraisal))
+      } catch (error) {
+        app.log.warn({ err: messageOf(error), sessionId: id }, 'record appraisal failed')
+      }
+    }
+    if (followUp !== null) {
+      try {
+        claimIntentionSurface(followUp.id)
+      } catch (error) {
+        app.log.warn({ err: messageOf(error), sessionId: id }, 'claim follow-up failed')
       }
     }
     if (shadowPromise !== null) void shadowPromise
@@ -455,7 +503,9 @@ app.get('/api/mind', async () => {
     thoughts: listThoughts(undefined, 20),
     reflections: listReflections(undefined, 5),
     intentions: listIntentions(undefined, 'active', 20),
+    followUps: listDueIntentions(),
     relationship: getRelationship(),
+    relationshipSnapshot: getRelationshipSnapshot(),
   }
 })
 

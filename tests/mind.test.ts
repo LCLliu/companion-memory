@@ -2,6 +2,8 @@ import { beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { resetDbForTests } from '../src/core/db.ts'
 import {
+  bumpRelationshipNumber,
+  claimIntentionSurface,
   createIntention,
   createMemory,
   createReflection,
@@ -9,13 +11,17 @@ import {
   completeIntention,
   getMindState,
   getMemory,
+  getRelationshipSnapshot,
+  listDueIntentions,
   listIntentions,
   listThoughts,
   reinforceMemory,
+  setRelationshipNumber,
   updateMindState,
 } from '../src/core/store.ts'
 import { retrieve } from '../src/core/retrieve.ts'
-import { routeMessage } from '../src/mind/perceive.ts'
+import { appraiseTurn, blendMindState } from '../src/mind/appraise.ts'
+import { perceiveMessage, routeMessage } from '../src/mind/perceive.ts'
 
 beforeEach(() => {
   resetDbForTests(':memory:')
@@ -94,4 +100,42 @@ test('快慢路由：闲聊快、情绪与记忆线索慢', () => {
   assert.equal(routeMessage('我今天真的很累，有点想哭', state).slow, true)
   assert.equal(routeMessage('你还记得我上次说的那件事吗', state).slow, true)
   assert.equal(routeMessage('我们是不是吵架了', state).slow, true)
+})
+
+test('关系状态：默认值、标签、边界', () => {
+  const initial = getRelationshipSnapshot()
+  assert.equal(initial.trust, 0.5)
+  assert.equal(initial.familiarity, 0.3)
+  assert.equal(initial.tension, 0.1)
+  assert.equal(initial.labels.trust, '中')
+  assert.equal(initial.labels.familiarity, '开始熟悉')
+  assert.equal(initial.labels.tension, '平静')
+
+  setRelationshipNumber('p-0001', 'trust', 2, 0, 1)
+  assert.equal(getRelationshipSnapshot().trust, 1)
+  bumpRelationshipNumber('p-0001', 'familiarity', 0.5, 0, 1)
+  assert.equal(getRelationshipSnapshot().familiarity, 0.8)
+})
+
+test('情绪评估：负向感知会轻微影响心情', () => {
+  const state = getMindState()
+  const percept = perceiveMessage('我今天真的很累，有点想哭', state)
+  const appraisal = appraiseTurn(percept, null)
+  assert.equal(appraisal.label, '累')
+  assert.ok(appraisal.needs.includes('被听见'))
+  const blended = blendMindState(state, appraisal)
+  assert.ok((blended.moodValence ?? 0) < 0)
+  assert.ok((blended.attention ?? '').includes('累'))
+})
+
+test('到期意图每天只浮现一次', () => {
+  const yesterday = new Date(Date.now() - 3_600_000).toISOString()
+  const intention = createIntention({ text: '问她面试结果', dueAt: yesterday })!
+  const now = new Date()
+  assert.equal(listDueIntentions('p-0001', now).length, 1)
+  assert.ok(claimIntentionSurface(intention.id, now))
+  assert.equal(listDueIntentions('p-0001', now).length, 0)
+
+  const tomorrow = new Date(now.getTime() + 86_400_000)
+  assert.equal(listDueIntentions('p-0001', tomorrow).length, 1)
 })

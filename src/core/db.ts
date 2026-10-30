@@ -168,6 +168,8 @@ CREATE TABLE IF NOT EXISTS intention (
   due_at TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   source_reflection_id TEXT,
+  last_surfaced_at TEXT,
+  surface_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   completed_at TEXT
 );
@@ -194,6 +196,8 @@ function migrate(database: DatabaseSync): void {
   ensureColumn(database, 'memory', 'emotional_charge', 'REAL NOT NULL DEFAULT 0')
   ensureColumn(database, 'memory', 'last_reinforced', 'TEXT')
   ensureColumn(database, 'memory', 'source_thought_id', 'TEXT')
+  ensureColumn(database, 'intention', 'last_surfaced_at', 'TEXT')
+  ensureColumn(database, 'intention', 'surface_count', 'INTEGER NOT NULL DEFAULT 0')
 }
 
 function seed(database: DatabaseSync): void {
@@ -210,6 +214,21 @@ function seed(database: DatabaseSync): void {
        VALUES (?, 0, 0.4, 0.6, '', '', ?)`,
     )
     .run('p-0001', now)
+
+  const relationshipDefaults: Record<string, string> = {
+    trust: '0.5',
+    familiarity: '0.3',
+    tension: '0.1',
+    recent_mood: '0',
+  }
+  for (const [key, value] of Object.entries(relationshipDefaults)) {
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO relationship(person_id, key, value, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run('p-0001', key, value, now)
+  }
 }
 
 export function initDb(path = process.env.DB_PATH ?? './data/companion.db'): DatabaseSync {

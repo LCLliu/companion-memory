@@ -15,6 +15,7 @@ import type {
   Person,
   Reflection,
   RelationshipEntry,
+  RelationshipSnapshot,
   Session,
   Thought,
   ThoughtKind,
@@ -510,6 +511,89 @@ export function getRelationship(personId = PERSON_ID): RelationshipEntry[] {
   }))
 }
 
+function relationshipNumber(
+  entries: RelationshipEntry[],
+  key: string,
+  fallback: number,
+): number {
+  const raw = entries.find((entry) => entry.key === key)?.value
+  if (raw === undefined) return fallback
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : fallback
+}
+
+function trustLabel(value: number): string {
+  if (value >= 0.75) return '高'
+  if (value >= 0.5) return '中'
+  if (value >= 0.25) return '偏低'
+  return '低'
+}
+
+function familiarityLabel(value: number): string {
+  if (value >= 0.75) return '很熟'
+  if (value >= 0.5) return '熟悉'
+  if (value >= 0.25) return '开始熟悉'
+  return '刚认识'
+}
+
+function tensionLabel(value: number): string {
+  if (value >= 0.6) return '紧张'
+  if (value >= 0.3) return '有点紧'
+  return '平静'
+}
+
+function recentMoodLabel(value: number): string {
+  if (value <= -0.25) return '最近低落'
+  if (value >= 0.25) return '最近不错'
+  return '平静'
+}
+
+export function getRelationshipSnapshot(personId = PERSON_ID): RelationshipSnapshot {
+  const entries = getRelationship(personId)
+  const trust = relationshipNumber(entries, 'trust', 0.5)
+  const familiarity = relationshipNumber(entries, 'familiarity', 0.3)
+  const tension = relationshipNumber(entries, 'tension', 0.1)
+  const recentMood = relationshipNumber(entries, 'recent_mood', 0)
+  return {
+    trust,
+    familiarity,
+    tension,
+    recentMood,
+    tone: entries.find((entry) => entry.key === 'tone')?.value ?? '',
+    labels: {
+      trust: trustLabel(trust),
+      familiarity: familiarityLabel(familiarity),
+      tension: tensionLabel(tension),
+      recentMood: recentMoodLabel(recentMood),
+    },
+    entries,
+  }
+}
+
+export function setRelationshipNumber(
+  personId: string,
+  key: 'trust' | 'familiarity' | 'tension' | 'recent_mood',
+  value: number,
+  min: number,
+  max: number,
+): void {
+  upsertRelationship(personId, key, clamp(value, min, max).toFixed(3))
+}
+
+export function bumpRelationshipNumber(
+  personId: string,
+  key: 'trust' | 'familiarity' | 'tension' | 'recent_mood',
+  delta: number,
+  min: number,
+  max: number,
+): number {
+  const entries = getRelationship(personId)
+  const current = relationshipNumber(entries, key, 0)
+  const next = clamp(current + delta, min, max)
+  upsertRelationship(personId, key, next.toFixed(3))
+  return next
+}
+
 export function listSourceMessages(ids: number[]): Message[] {
   if (ids.length === 0) return []
   const placeholders = ids.map(() => '?').join(',')
@@ -764,6 +848,8 @@ function rowToIntention(row: any): Intention {
     dueAt: row.due_at ? String(row.due_at) : null,
     status: String(row.status) as IntentionStatus,
     sourceReflectionId: row.source_reflection_id ? String(row.source_reflection_id) : null,
+    lastSurfacedAt: row.last_surfaced_at ? String(row.last_surfaced_at) : null,
+    surfaceCount: Number(row.surface_count ?? 0),
     createdAt: String(row.created_at),
     completedAt: row.completed_at ? String(row.completed_at) : null,
   }
@@ -827,6 +913,44 @@ export function listIntentions(
   return rows.map(rowToIntention)
 }
 
+export function getIntention(id: string): Intention | undefined {
+  const row = getDb().prepare('SELECT * FROM intention WHERE id = ?').get(id) as any
+  return row === undefined ? undefined : rowToIntention(row)
+}
+
+export function listDueIntentions(personId = PERSON_ID, now = new Date()): Intention[] {
+  const at = now.toISOString()
+  const day = at.slice(0, 10)
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM intention
+       WHERE person_id = ?
+         AND status = 'active'
+         AND due_at IS NOT NULL
+         AND due_at <= ?
+         AND (last_surfaced_at IS NULL OR substr(last_surfaced_at, 1, 10) <> ?)
+       ORDER BY due_at ASC, created_at ASC
+       LIMIT 5`,
+    )
+    .all(personId, at, day) as any[]
+  return rows.map(rowToIntention)
+}
+
+export function claimIntentionSurface(id: string, now = new Date()): Intention | undefined {
+  const at = now.toISOString()
+  const day = at.slice(0, 10)
+  const result = getDb()
+    .prepare(
+      `UPDATE intention
+       SET last_surfaced_at = ?, surface_count = surface_count + 1
+       WHERE id = ? AND status = 'active'
+         AND (last_surfaced_at IS NULL OR substr(last_surfaced_at, 1, 10) <> ?)`,
+    )
+    .run(at, id, day)
+  if (Number(result.changes) === 0) return undefined
+  return getIntention(id)
+}
+
 export function completeIntention(id: string): boolean {
   const result = getDb()
     .prepare("UPDATE intention SET status = 'done', completed_at = ? WHERE id = ? AND status = 'active'")
@@ -834,11 +958,13 @@ export function completeIntention(id: string): boolean {
   return Number(result.changes) > 0
 }
 
-export function expireIntentions(now = new Date()): number {
+export function expireIntentions(now = new Date(), graceDays = 14): number {
+  // due_at 是“该提起的时间”，不是“过期时间”；给它一段宽限期再标记 expired。
+  const cutoff = new Date(now.getTime() - graceDays * 86_400_000).toISOString()
   const result = getDb()
     .prepare(
       "UPDATE intention SET status = 'expired' WHERE status = 'active' AND due_at IS NOT NULL AND due_at < ?",
     )
-    .run(now.toISOString())
+    .run(cutoff)
   return Number(result.changes)
 }

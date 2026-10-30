@@ -143,8 +143,25 @@ export interface Intention {
   dueAt: string | null
   status: IntentionStatus
   sourceReflectionId: string | null
+  lastSurfacedAt: string | null
+  surfaceCount: number
   createdAt: string
   completedAt: string | null
+}
+
+export interface RelationshipSnapshot {
+  trust: number
+  familiarity: number
+  tension: number
+  recentMood: number
+  tone: string
+  labels: {
+    trust: string
+    familiarity: string
+    tension: string
+    recentMood: string
+  }
+  entries: RelationshipEntry[]
 }
 
 export interface RecallHit {

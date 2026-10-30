@@ -3,12 +3,15 @@ import { extractSession, type ExtractionResult } from '../core/extract.ts'
 import { buildBrief } from '../core/inject.ts'
 import { completeJson, extractModel, mindModel } from '../core/llm.ts'
 import {
+  bumpRelationshipNumber,
   createIntention,
   createReflection,
   getMindState,
   getRelationship,
+  getRelationshipSnapshot,
   getSession,
   listRecentMessages,
+  setRelationshipNumber,
   updateMindState,
   upsertRelationship,
 } from '../core/store.ts'
@@ -20,6 +23,7 @@ const ReflectionSchema = z.object({
     label: z.string().min(1),
     needs: z.array(z.string()).default([]),
     confidence: z.number().min(0).max(1).default(0.5),
+    valence: z.number().min(-1).max(1).optional(),
   }),
   my_state: z.object({
     mood: z.string().default('平静'),
@@ -158,6 +162,21 @@ export async function reflectSession(sessionId: string): Promise<ReflectSessionR
     if (tone !== undefined && tone !== '') {
       upsertRelationship(session.personId, 'tone', tone)
     }
+
+    // 关系是慢变量：一次会话只允许小幅变化。
+    if (parsed.relationship_delta.trust_delta !== undefined) {
+      bumpRelationshipNumber(session.personId, 'trust', parsed.relationship_delta.trust_delta, 0, 1)
+    }
+    if (parsed.relationship_delta.tension_delta !== undefined) {
+      bumpRelationshipNumber(session.personId, 'tension', parsed.relationship_delta.tension_delta, 0, 1)
+    }
+    bumpRelationshipNumber(session.personId, 'familiarity', 0.02, 0, 1)
+    const recentMood = parsed.user_state.valence ?? parsed.my_state.mood_valence
+    if (recentMood !== undefined) {
+      setRelationshipNumber(session.personId, 'recent_mood', recentMood, -1, 1)
+    }
+    // 读一次快照，确保关系变化落盘后再返回（也为将来的返回值留位置）。
+    void getRelationshipSnapshot(session.personId)
 
     const intention = parsed.next_intention === null
       ? null

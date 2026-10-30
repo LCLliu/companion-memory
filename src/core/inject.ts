@@ -1,4 +1,4 @@
-import { getRelationship, listMemories, listOpenLoops } from './store.ts'
+import { getRelationship, getRelationshipSnapshot, listMemories, listOpenLoops } from './store.ts'
 import type { Memory, RecallHit, SessionBrief } from './types.ts'
 
 const RELATION_LABELS: Record<string, string> = {
@@ -21,6 +21,7 @@ function dateOf(memory: Memory): string {
 
 export function buildBrief(personId: string): SessionBrief {
   const relationship = getRelationship(personId)
+  const relationshipSnapshot = getRelationshipSnapshot(personId)
   const openLoops = listOpenLoops(personId, 'open', 5)
   const episodes = listMemories({
     personId,
@@ -38,9 +39,17 @@ export function buildBrief(personId: string): SessionBrief {
   })
 
   const lines: string[] = []
-  if (relationship.length > 0) {
-    lines.push('【关系卡】')
-    for (const entry of relationship) {
+  lines.push('【关系状态】')
+  lines.push(
+    `- 信任：${relationshipSnapshot.labels.trust} · 熟悉：${relationshipSnapshot.labels.familiarity} · ` +
+      `张力：${relationshipSnapshot.labels.tension} · 最近感觉：${relationshipSnapshot.labels.recentMood}`,
+  )
+  const descriptive = relationship.filter(
+    (entry) => !['trust', 'familiarity', 'tension', 'recent_mood'].includes(entry.key),
+  )
+  if (descriptive.length > 0) {
+    lines.push('【关系备注】')
+    for (const entry of descriptive) {
       lines.push(`- ${RELATION_LABELS[entry.key] ?? entry.key}：${truncate(entry.value, 100)}`)
     }
   }
