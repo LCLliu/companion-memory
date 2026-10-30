@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import type { Memory, MemoryKind, Message, OpenLoop, Session, SessionBrief } from '../core/types.ts'
+import type {
+  Intention,
+  Memory,
+  MemoryKind,
+  Message,
+  OpenLoop,
+  Reflection,
+  Session,
+  SessionBrief,
+  Thought,
+} from '../core/types.ts'
 import {
   del,
   get,
@@ -8,13 +18,31 @@ import {
   type DebugResult,
   type DetailResult,
   type ExtractResponse,
+  type MindMeta,
+  type MindPayload,
+  type MindPreview,
   type RememberResult,
   type SessionDetail,
 } from './api.ts'
 
 type ToastKind = 'ok' | 'info' | 'error'
-type Tab = 'memories' | 'loops' | 'debug'
+type Tab = 'memories' | 'loops' | 'mind' | 'debug'
 type StatusFilter = 'active' | 'archived' | 'all'
+
+const MODE_LABEL: Record<string, string> = {
+  off: '内心关闭',
+  shadow: '影子慢想',
+  on: '慢想开启',
+}
+
+const THOUGHT_LABEL: Record<string, string> = {
+  appraisal: '评估',
+  option: '候选',
+  critique: '自检',
+  reflection: '反思',
+  intention_candidate: '意图',
+  summary: '慢想',
+}
 
 const KIND_LABEL: Record<string, string> = {
   episode: '事件',
@@ -54,6 +82,12 @@ function fmt(value: string | null): string {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function labelOf(value: unknown, key: string): string {
+  if (typeof value !== 'object' || value === null) return ''
+  const item = (value as Record<string, unknown>)[key]
+  return typeof item === 'string' ? item : ''
 }
 
 function KindBadge({ kind }: { kind: string }) {
@@ -163,6 +197,7 @@ function DetailModal({
   onPin,
   onArchive,
   onRestore,
+  onReinforce,
   onDelete,
 }: {
   detail: DetailResult
@@ -170,6 +205,7 @@ function DetailModal({
   onPin: (memory: Memory) => void
   onArchive: (memory: Memory) => void
   onRestore: (memory: Memory) => void
+  onReinforce: (memory: Memory) => void
   onDelete: (memory: Memory) => void
 }) {
   const memory = detail.memory
@@ -208,8 +244,12 @@ function DetailModal({
             <strong>{memory.confidence.toFixed(2)}</strong>
           </div>
           <div>
-            <span>召回次数</span>
+            <span>强化次数</span>
             <strong>{memory.accessCount}</strong>
+          </div>
+          <div>
+            <span>最近强化</span>
+            <strong>{fmt(memory.lastReinforced)}</strong>
           </div>
           <div>
             <span>来源轮次</span>
@@ -231,6 +271,9 @@ function DetailModal({
 
         <footer className="modal-foot">
           <div>
+            <button type="button" className="ghost" onClick={() => onReinforce(memory)}>
+              确认重要
+            </button>
             <button type="button" className="ghost" onClick={() => onPin(memory)}>
               {memory.pinned ? '取消置顶' : '置顶'}
             </button>
@@ -283,6 +326,11 @@ export default function App() {
   const [debugLoading, setDebugLoading] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [loopText, setLoopText] = useState('')
+  const [mind, setMind] = useState<MindPayload | null>(null)
+  const [mindMeta, setMindMeta] = useState<MindMeta | null>(null)
+  const [mindQuery, setMindQuery] = useState('')
+  const [mindPreview, setMindPreview] = useState<MindPreview | null>(null)
+  const [mindLoading, setMindLoading] = useState(false)
   const [toast, setToast] = useState<{ text: string; kind: ToastKind } | null>(null)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -308,16 +356,18 @@ export default function App() {
 
   async function boot(): Promise<void> {
     try {
-      const [cfg, sessionList, memoryList, loopList] = await Promise.all([
+      const [cfg, sessionList, memoryList, loopList, mindData] = await Promise.all([
         get<ApiConfig>('/api/config'),
         get<{ items: Session[] }>('/api/sessions'),
         get<{ items: Memory[] }>('/api/memories?status=all&limit=300'),
         get<{ items: OpenLoop[] }>('/api/open-loops?status=all'),
+        get<MindPayload>('/api/mind'),
       ])
       setConfig(cfg)
       setSessions(sessionList.items)
       setMemories(memoryList.items)
       setLoops(loopList.items)
+      setMind(mindData)
       if (sessionList.items.length > 0) {
         await loadSession(sessionList.items[0]!.id)
       }
@@ -334,14 +384,16 @@ export default function App() {
   }
 
   async function refreshAll(): Promise<void> {
-    const [sessionList, memoryList, loopList] = await Promise.all([
+    const [sessionList, memoryList, loopList, mindData] = await Promise.all([
       get<{ items: Session[] }>('/api/sessions'),
       get<{ items: Memory[] }>('/api/memories?status=all&limit=300'),
       get<{ items: OpenLoop[] }>('/api/open-loops?status=all'),
+      get<MindPayload>('/api/mind'),
     ])
     setSessions(sessionList.items)
     setMemories(memoryList.items)
     setLoops(loopList.items)
+    setMind(mindData)
     if (session !== null) {
       const data = await get<{ brief: SessionBrief }>(`/api/sessions/${session.id}/brief`)
       setBrief(data.brief)
@@ -389,6 +441,7 @@ export default function App() {
     setStreaming(true)
     setStreamText('')
     setInjected([])
+    setMindMeta(null)
 
     let streamError: string | null = null
     try {
@@ -429,6 +482,9 @@ export default function App() {
           }
           if (event === 'meta') {
             setInjected(Array.isArray(payload.injected) ? payload.injected : [])
+            if (payload.mind !== undefined && payload.mind !== null) {
+              setMindMeta(payload.mind as MindMeta)
+            }
             if (typeof payload.brief === 'string') {
               setBrief((prev) => (prev === null ? prev : { ...prev, text: payload.brief }))
             }
@@ -437,8 +493,8 @@ export default function App() {
               setStreamText((prev) => prev + payload.text)
             }
           } else if (event === 'done') {
-            if (payload.autoExtract === true) {
-              notify('本轮已触发自动抽取，稍后可在记忆面板查看', 'info')
+            if (payload.autoReflect === true || payload.autoExtract === true) {
+              notify('本轮已触发自动反思，稍后可在“内心”里查看', 'info')
             }
           } else if (event === 'error') {
             streamError = String(payload.message ?? '模型请求失败')
@@ -494,10 +550,16 @@ export default function App() {
     try {
       const data = await post<ExtractResponse>(`/api/sessions/${session.id}/extract`)
       const { result } = data
+      const reflection = data.reflectionError
+        ? ` · 反思失败：${data.reflectionError}`
+        : data.reflection
+          ? ` · 反思 ${data.reflection.id}`
+          : ''
       notify(
         `抽取完成：事件 ${result.episodeId ?? '无'} · 事实 ${result.factIds.length} · 未完成 ${result.openLoopIds.length}` +
-          (result.skipped > 0 ? ` · 跳过 ${result.skipped}` : ''),
-        'ok',
+          (result.skipped > 0 ? ` · 跳过 ${result.skipped}` : '') +
+          reflection,
+        data.reflectionError ? 'info' : 'ok',
       )
       await loadSession(session.id)
       await refreshAll()
@@ -549,6 +611,17 @@ export default function App() {
     }
   }
 
+  async function reinforceMemory(memory: Memory): Promise<void> {
+    try {
+      await post(`/api/memories/${memory.id}/reinforce`)
+      await refreshAll()
+      if (detail?.memory.id === memory.id) await openDetail(memory.id)
+      notify(`已确认重要：${memory.id}`, 'ok')
+    } catch (error) {
+      notify(errorText(error), 'error')
+    }
+  }
+
   async function hardDelete(memory: Memory): Promise<void> {
     if (!window.confirm(`彻底删除 ${memory.id}？此操作不可恢复。`)) return
     try {
@@ -558,6 +631,29 @@ export default function App() {
       notify(`已删除 ${memory.id}`, 'ok')
     } catch (error) {
       notify(errorText(error), 'error')
+    }
+  }
+
+  async function completeIntention(intention: Intention): Promise<void> {
+    try {
+      await post(`/api/intentions/${intention.id}/done`)
+      await refreshAll()
+      notify(`已完成：${intention.text}`, 'ok')
+    } catch (error) {
+      notify(errorText(error), 'error')
+    }
+  }
+
+  async function runMindPreview(): Promise<void> {
+    if (mindQuery.trim() === '') return
+    setMindLoading(true)
+    try {
+      const data = await get<MindPreview>(`/api/debug/mind?q=${encodeURIComponent(mindQuery)}`)
+      setMindPreview(data)
+    } catch (error) {
+      notify(errorText(error), 'error')
+    } finally {
+      setMindLoading(false)
     }
   }
 
@@ -667,16 +763,18 @@ export default function App() {
             <p>{session === null ? '新建一个会话开始' : `本会话 ${messages.filter((m) => m.role === 'user').length} 轮用户消息`}</p>
           </div>
           <div className="head-actions">
-            <span className="model-pill">{config?.extractModel ?? '—'}</span>
+            <span className="model-pill">
+              {config?.chatModel ?? '—'} · {MODE_LABEL[config?.mindMode ?? 'off']}
+            </span>
             <button type="button" className="ghost" onClick={() => void runExtract()} disabled={session === null || busy !== null}>
-              {busy === 'extract' ? '抽取中…' : '结束并抽取'}
+              {busy === 'extract' ? '反思中…' : '结束并反思'}
             </button>
           </div>
         </header>
 
         {config !== null && !config.keyConfigured && (
           <div className="banner">
-            未配置 <code>LLM_API_KEY</code>：复制 <code>.env.example</code> 为 <code>.env</code> 并填入智谱 Key，重启后即可聊天与自动抽取。现在仍可手动写入记忆、测试检索。
+            未配置 <code>LLM_API_KEY</code>：复制 <code>.env.example</code> 为 <code>.env</code> 并填入智谱 Key，重启后即可聊天与自动反思。现在仍可手动写入记忆、测试检索。
           </div>
         )}
 
@@ -728,6 +826,17 @@ export default function App() {
                   ))}
                 </div>
               )}
+              {mindMeta !== null && (
+                <div className={`mind-trace ${mindMeta.slow ? 'slow' : 'fast'}`}>
+                  {mindMeta.mode === 'off'
+                    ? '快速回应'
+                    : mindMeta.slow
+                      ? mindMeta.plan !== null
+                        ? `慢想：${mindMeta.plan.chosen}`
+                        : '影子慢想中（不影响回复）'
+                      : '快速回应'}
+                </div>
+              )}
             </div>
           )}
 
@@ -771,8 +880,11 @@ export default function App() {
           <button type="button" className={tab === 'loops' ? 'active' : ''} onClick={() => setTab('loops')}>
             未完成 <em>{openLoops.length}</em>
           </button>
+          <button type="button" className={tab === 'mind' ? 'active' : ''} onClick={() => setTab('mind')}>
+            内心 <em>{mind?.thoughts.length ?? 0}</em>
+          </button>
           <button type="button" className={tab === 'debug' ? 'active' : ''} onClick={() => setTab('debug')}>
-            检索调试
+            调试
           </button>
         </div>
 
@@ -850,6 +962,130 @@ export default function App() {
           </div>
         )}
 
+        {tab === 'mind' && (
+          <div className="tab-body">
+            {mind === null ? (
+              <p className="empty-small">内心层还没启动。重启后会自动创建。</p>
+            ) : (
+              <>
+                <div className="mind-state">
+                  <div className="memory-line">
+                    <span className={`badge mind-${mind.mode}`}>{MODE_LABEL[mind.mode]}</span>
+                    <span className="memory-date">{fmt(mind.state.updatedAt)}</span>
+                  </div>
+                  <div className="mind-metrics">
+                    <span>心情 {mind.state.moodValence.toFixed(2)} / {mind.state.moodArousal.toFixed(2)}</span>
+                    <span>能量 {mind.state.energy.toFixed(2)}</span>
+                  </div>
+                  <p>{mind.state.attention || '还没有明确的关注点'}</p>
+                  {mind.state.currentConcern !== '' && (
+                    <p className="muted">心里挂着：{mind.state.currentConcern}</p>
+                  )}
+                  {mind.relationship.length > 0 && (
+                    <div className="mind-rel">
+                      关系：{mind.relationship.map((entry) => `${entry.key}=${entry.value}`).join('；')}
+                    </div>
+                  )}
+                </div>
+
+                <h4 className="mind-h">最近的想法</h4>
+                {mind.thoughts.length === 0 && <p className="empty-small">慢路径触发后，这里会出现一句摘要。</p>}
+                <div className="thought-list">
+                  {mind.thoughts.map((thought: Thought) => (
+                    <div className="thought-item" key={thought.id}>
+                      <div className="memory-line">
+                        <span className={`badge thought-${thought.kind}`}>{THOUGHT_LABEL[thought.kind] ?? thought.kind}</span>
+                        <span className="memory-date">{fmt(thought.createdAt)}</span>
+                      </div>
+                      <p>{thought.content}</p>
+                      <div className="memory-foot">
+                        <span>置信 {thought.confidence.toFixed(2)}</span>
+                        <span>{thought.id}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <h4 className="mind-h">最近的反思</h4>
+                {mind.reflections.length === 0 && <p className="empty-small">结束一次会话并反思后，这里会出现记录。</p>}
+                <div className="reflection-list">
+                  {mind.reflections.map((reflection: Reflection) => (
+                    <div className="reflection-item" key={reflection.id}>
+                      <div className="memory-line">
+                        <span className="badge reflection">反思</span>
+                        <span className="memory-date">{fmt(reflection.createdAt)}</span>
+                      </div>
+                      <p>{reflection.whatHappened}</p>
+                      {labelOf(reflection.userState, 'label') !== '' && (
+                        <div className="memory-foot">
+                          <span>她当时：{labelOf(reflection.userState, 'label')}</span>
+                        </div>
+                      )}
+                      {labelOf(reflection.relationshipDelta, 'tone') !== '' && (
+                        <div className="memory-foot">
+                          <span>关系：{labelOf(reflection.relationshipDelta, 'tone')}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <h4 className="mind-h">想做的事</h4>
+                {mind.intentions.length === 0 && <p className="empty-small">还没有主动意图。</p>}
+                <div className="intention-list">
+                  {mind.intentions.map((intention: Intention) => (
+                    <div className="intention-item" key={intention.id}>
+                      <div className="memory-line">
+                        <span className="badge intention">{intention.kind}</span>
+                        <span className="memory-date">{intention.dueAt ? intention.dueAt.slice(0, 10) : '未定期'}</span>
+                      </div>
+                      <p>{intention.text}</p>
+                      <div className="memory-foot">
+                        <span>{intention.id}</span>
+                        <button type="button" className="link" onClick={() => void completeIntention(intention)}>
+                          完成
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <h4 className="mind-h">路由预览</h4>
+                <p className="hint">只跑本地启发式，不调用模型；看这句话会不会触发慢想。</p>
+                <div className="inline-form">
+                  <input
+                    value={mindQuery}
+                    onChange={(event) => setMindQuery(event.target.value)}
+                    placeholder="例如：我今天真的很累"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        void runMindPreview()
+                      }
+                    }}
+                  />
+                  <button type="button" className="ghost" onClick={() => void runMindPreview()} disabled={mindLoading || mindQuery.trim() === ''}>
+                    {mindLoading ? '判断中…' : '判断'}
+                  </button>
+                </div>
+                {mindPreview !== null && (
+                  <div className="mind-preview-result">
+                    <span className={`badge ${mindPreview.slow ? 'slow' : 'fast'}`}>
+                      {mindPreview.slow ? '会慢想' : '快速回应'}
+                    </span>
+                    <span>
+                      {mindPreview.percept.emotion.label} · {mindPreview.reasons.join(' / ') || '无明显信号'}
+                    </span>
+                    <p>
+                      意图 {mindPreview.percept.intent} · 歧义 {mindPreview.percept.ambiguity.toFixed(2)} · 风险 {mindPreview.percept.risk}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         {tab === 'debug' && (
           <div className="tab-body">
             <p className="hint">输入一句话，看当前检索会召回哪些记忆、各自得分多少。</p>
@@ -885,6 +1121,7 @@ export default function App() {
                         <span title={`原始 BM25: ${item.bm25}`}>相关 {item.norm.toFixed(2)}</span>
                         <span>新近 {item.recency.toFixed(2)}</span>
                         <span>重要 {item.salience.toFixed(2)}</span>
+                        <span>情绪 {item.emotion.toFixed(2)}</span>
                         <strong>排序分 {item.final.toFixed(2)}</strong>
                       </div>
                     </div>
@@ -920,6 +1157,7 @@ export default function App() {
           onPin={(memory) => void togglePin(memory)}
           onArchive={(memory) => void archiveMemory(memory)}
           onRestore={(memory) => void restoreMemory(memory)}
+          onReinforce={(memory) => void reinforceMemory(memory)}
           onDelete={(memory) => void hardDelete(memory)}
         />
       )}

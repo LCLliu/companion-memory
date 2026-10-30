@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS memory (
   pinned INTEGER NOT NULL DEFAULT 0,
   access_count INTEGER NOT NULL DEFAULT 0,
   last_access TEXT,
+  unresolved INTEGER NOT NULL DEFAULT 0,
+  emotional_charge REAL NOT NULL DEFAULT 0,
+  last_reinforced TEXT,
+  source_thought_id TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -119,12 +123,78 @@ CREATE TABLE IF NOT EXISTS recall_log (
   at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mind_state (
+  person_id TEXT PRIMARY KEY REFERENCES person(id),
+  mood_valence REAL NOT NULL DEFAULT 0,
+  mood_arousal REAL NOT NULL DEFAULT 0.4,
+  energy REAL NOT NULL DEFAULT 0.6,
+  attention TEXT NOT NULL DEFAULT '',
+  current_concern TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS thought (
+  id TEXT PRIMARY KEY,
+  person_id TEXT NOT NULL REFERENCES person(id),
+  session_id TEXT,
+  turn_message_id INTEGER,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  selected INTEGER NOT NULL DEFAULT 0,
+  visible INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reflection (
+  id TEXT PRIMARY KEY,
+  person_id TEXT NOT NULL REFERENCES person(id),
+  session_id TEXT NOT NULL,
+  what_happened TEXT NOT NULL,
+  user_state TEXT NOT NULL DEFAULT '{}',
+  my_state TEXT NOT NULL DEFAULT '{}',
+  learned TEXT NOT NULL DEFAULT '[]',
+  unresolved TEXT NOT NULL DEFAULT '[]',
+  relationship_delta TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS intention (
+  id TEXT PRIMARY KEY,
+  person_id TEXT NOT NULL REFERENCES person(id),
+  text TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'follow_up',
+  due_at TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_reflection_id TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_memory_person_status ON memory(person_id, status);
 CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory(kind);
 CREATE INDEX IF NOT EXISTS idx_memory_pinned ON memory(pinned);
 CREATE INDEX IF NOT EXISTS idx_message_session ON message(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_open_loop_person_status ON open_loop(person_id, status);
+CREATE INDEX IF NOT EXISTS idx_thought_person_created ON thought(person_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_reflection_person_created ON reflection(person_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_intention_person_status_due ON intention(person_id, status, due_at);
 `
+
+function ensureColumn(database: DatabaseSync, table: string, column: string, definition: string): void {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  if (columns.some((item) => item.name === column)) return
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+}
+
+function migrate(database: DatabaseSync): void {
+  // Phase 0 的旧库没有这些列；新库由 SCHEMA 直接建好。
+  ensureColumn(database, 'memory', 'unresolved', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(database, 'memory', 'emotional_charge', 'REAL NOT NULL DEFAULT 0')
+  ensureColumn(database, 'memory', 'last_reinforced', 'TEXT')
+  ensureColumn(database, 'memory', 'source_thought_id', 'TEXT')
+}
 
 function seed(database: DatabaseSync): void {
   const now = new Date().toISOString()
@@ -134,6 +204,12 @@ function seed(database: DatabaseSync): void {
        VALUES (?, ?, ?, ?, ?)`,
     )
     .run('p-0001', 'web', 'local', '我', now)
+  database
+    .prepare(
+      `INSERT OR IGNORE INTO mind_state(person_id, mood_valence, mood_arousal, energy, attention, current_concern, updated_at)
+       VALUES (?, 0, 0.4, 0.6, '', '', ?)`,
+    )
+    .run('p-0001', now)
 }
 
 export function initDb(path = process.env.DB_PATH ?? './data/companion.db'): DatabaseSync {
@@ -141,6 +217,7 @@ export function initDb(path = process.env.DB_PATH ?? './data/companion.db'): Dat
   if (path !== ':memory:') mkdirSync(dirname(resolve(path)), { recursive: true })
   db = new DatabaseSync(path)
   db.exec(SCHEMA)
+  migrate(db)
   seed(db)
   currentPath = path
   return db

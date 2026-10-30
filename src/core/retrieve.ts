@@ -79,14 +79,26 @@ function scoreCandidates(candidates: Candidate[], nowMs: number): RecallHit[] {
       const days = Number.isFinite(anchor) ? Math.max(0, (nowMs - anchor) / 86_400_000) : 0
       const recency = Math.exp(-days / 90)
       const salience = clamp(memory.salience, 0, 1)
+      const emotion = clamp(
+        Math.abs(memory.valence) * 0.4 + memory.arousal * 0.4 + memory.emotionalCharge * 0.2,
+        0,
+        1,
+      )
+      const reinforcement = clamp(Math.log1p(memory.accessCount) / Math.log1p(10), 0, 1)
+      const unresolved = memory.pinned ? 0 : memory.unresolved ? 0.05 : 0
       const pinnedBonus = memory.pinned ? 0.08 : 0
-      const final = 0.6 * norm + 0.25 * recency + 0.15 * salience + pinnedBonus
+      const final =
+        0.5 * norm + 0.2 * recency + 0.12 * salience + 0.08 * emotion +
+        0.05 * reinforcement + unresolved + pinnedBonus
       return {
         memory,
         bm25,
         norm,
         recency,
         salience,
+        emotion,
+        reinforcement,
+        unresolved,
         pinned: memory.pinned,
         final,
       }

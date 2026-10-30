@@ -1,16 +1,23 @@
 import { randomUUID } from 'node:crypto'
 import { getDb } from './db.ts'
 import type {
+  Intention,
+  IntentionKind,
+  IntentionStatus,
   Memory,
   MemoryKind,
   MemoryStatus,
   Message,
+  MindState,
   OpenLoop,
   OpenLoopKind,
   OpenLoopStatus,
   Person,
+  Reflection,
   RelationshipEntry,
   Session,
+  Thought,
+  ThoughtKind,
 } from './types.ts'
 
 const PERSON_ID = 'p-0001'
@@ -61,6 +68,10 @@ function rowToMemory(row: any): Memory {
     pinned: Number(row.pinned) === 1,
     accessCount: Number(row.access_count),
     lastAccess: row.last_access ? String(row.last_access) : null,
+    unresolved: Number(row.unresolved ?? 0) === 1,
+    emotionalCharge: Number(row.emotional_charge ?? 0),
+    lastReinforced: row.last_reinforced ? String(row.last_reinforced) : null,
+    sourceThoughtId: row.source_thought_id ? String(row.source_thought_id) : null,
     createdAt: String(row.created_at),
   }
 }
@@ -103,10 +114,26 @@ function rowToOpenLoop(row: any): OpenLoop {
   }
 }
 
-function nextId(prefix: 'm' | 'ol'): string {
+const ID_TABLES = {
+  m: 'memory',
+  ol: 'open_loop',
+  t: 'thought',
+  r: 'reflection',
+  i: 'intention',
+} as const
+
+const ID_KEYS = {
+  m: 'memory_seq',
+  ol: 'open_loop_seq',
+  t: 'thought_seq',
+  r: 'reflection_seq',
+  i: 'intention_seq',
+} as const
+
+function nextId(prefix: keyof typeof ID_TABLES): string {
   const db = getDb()
-  const table = prefix === 'm' ? 'memory' : 'open_loop'
-  const key = prefix === 'm' ? 'memory_seq' : 'open_loop_seq'
+  const table = ID_TABLES[prefix]
+  const key = ID_KEYS[prefix]
   const stored = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
     | { value: string }
     | undefined
@@ -243,6 +270,9 @@ export interface CreateMemoryInput {
   sourceSessionId?: string | null
   sourceMessageIds?: number[]
   pinned?: boolean
+  unresolved?: boolean
+  emotionalCharge?: number
+  sourceThoughtId?: string | null
 }
 
 export function createMemory(input: CreateMemoryInput): Memory {
@@ -255,8 +285,8 @@ export function createMemory(input: CreateMemoryInput): Memory {
       `INSERT INTO memory(
         id, person_id, kind, level, text, occurred_at, valid_from, valid_to,
         valence, arousal, salience, confidence, status, source_session_id,
-        source_message_ids, pinned, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        source_message_ids, pinned, unresolved, emotional_charge, source_thought_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -275,6 +305,9 @@ export function createMemory(input: CreateMemoryInput): Memory {
       input.sourceSessionId ?? null,
       JSON.stringify(input.sourceMessageIds ?? []),
       input.pinned === true ? 1 : 0,
+      input.unresolved === true ? 1 : 0,
+      input.emotionalCharge ?? 0,
+      input.sourceThoughtId ?? null,
       at,
     )
   return getMemory(id)!
@@ -360,12 +393,16 @@ export function deleteMemory(id: string): boolean {
   return Number(result.changes) > 0
 }
 
-export function touchMemory(id: string): void {
-  getDb()
+export function reinforceMemory(id: string): boolean {
+  const at = nowIso()
+  const result = getDb()
     .prepare(
-      'UPDATE memory SET access_count = access_count + 1, last_access = ? WHERE id = ?',
+      `UPDATE memory
+       SET access_count = access_count + 1, last_access = ?, last_reinforced = ?
+       WHERE id = ?`,
     )
-    .run(nowIso(), id)
+    .run(at, at, id)
+  return Number(result.changes) > 0
 }
 
 export function logRecall(input: {
@@ -507,4 +544,301 @@ export function stats(personId = PERSON_ID): {
     ),
     openLoops: one("SELECT COUNT(*) AS n FROM open_loop WHERE person_id = ? AND status = 'open'"),
   }
+}
+
+// ── 心智层：mind_state / thought / reflection / intention ───────────────────
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function parseJsonObject(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== 'string' || raw === '') return {}
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function parseJsonArray(raw: unknown): unknown[] {
+  if (typeof raw !== 'string' || raw === '') return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+export function getMindState(personId = PERSON_ID): MindState {
+  const db = getDb()
+  let row = db.prepare('SELECT * FROM mind_state WHERE person_id = ?').get(personId) as any
+  if (row === undefined) {
+    const at = nowIso()
+    db.prepare(
+      `INSERT INTO mind_state(person_id, mood_valence, mood_arousal, energy, attention, current_concern, updated_at)
+       VALUES (?, 0, 0.4, 0.6, '', '', ?)`,
+    ).run(personId, at)
+    row = db.prepare('SELECT * FROM mind_state WHERE person_id = ?').get(personId) as any
+  }
+  return {
+    personId: String(row.person_id),
+    moodValence: Number(row.mood_valence),
+    moodArousal: Number(row.mood_arousal),
+    energy: Number(row.energy),
+    attention: String(row.attention),
+    currentConcern: String(row.current_concern),
+    updatedAt: String(row.updated_at),
+  }
+}
+
+export function updateMindState(
+  personId: string,
+  patch: Partial<Omit<MindState, 'personId' | 'updatedAt'>>,
+): MindState {
+  const current = getMindState(personId)
+  const next: MindState = {
+    ...current,
+    moodValence: clamp(patch.moodValence ?? current.moodValence, -1, 1),
+    moodArousal: clamp(patch.moodArousal ?? current.moodArousal, 0, 1),
+    energy: clamp(patch.energy ?? current.energy, 0, 1),
+    attention: patch.attention ?? current.attention,
+    currentConcern: patch.currentConcern ?? current.currentConcern,
+    updatedAt: nowIso(),
+  }
+  getDb()
+    .prepare(
+      `UPDATE mind_state
+       SET mood_valence = ?, mood_arousal = ?, energy = ?, attention = ?,
+           current_concern = ?, updated_at = ?
+       WHERE person_id = ?`,
+    )
+    .run(
+      next.moodValence,
+      next.moodArousal,
+      next.energy,
+      next.attention,
+      next.currentConcern,
+      next.updatedAt,
+      personId,
+    )
+  return next
+}
+
+function rowToThought(row: any): Thought {
+  return {
+    id: String(row.id),
+    personId: String(row.person_id),
+    sessionId: row.session_id ? String(row.session_id) : null,
+    turnMessageId: row.turn_message_id === null ? null : Number(row.turn_message_id),
+    kind: String(row.kind) as ThoughtKind,
+    content: String(row.content),
+    confidence: Number(row.confidence),
+    selected: Number(row.selected) === 1,
+    visible: Number(row.visible) === 1,
+    expiresAt: row.expires_at ? String(row.expires_at) : null,
+    createdAt: String(row.created_at),
+  }
+}
+
+export function pruneThoughts(now = new Date()): number {
+  const result = getDb().prepare('DELETE FROM thought WHERE expires_at IS NOT NULL AND expires_at < ?').run(now.toISOString())
+  return Number(result.changes)
+}
+
+export function createThought(input: {
+  personId?: string
+  sessionId?: string | null
+  turnMessageId?: number | null
+  kind: ThoughtKind
+  content: string
+  confidence?: number
+  selected?: boolean
+  visible?: boolean
+  ttlDays?: number
+}): Thought {
+  const content = input.content.trim()
+  if (content === '') throw new Error('思考内容不能为空')
+  pruneThoughts()
+  const at = new Date()
+  const expiresAt = new Date(at.getTime() + (input.ttlDays ?? 7) * 86_400_000).toISOString()
+  const id = nextId('t')
+  getDb()
+    .prepare(
+      `INSERT INTO thought(
+        id, person_id, session_id, turn_message_id, kind, content,
+        confidence, selected, visible, expires_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.personId ?? PERSON_ID,
+      input.sessionId ?? null,
+      input.turnMessageId ?? null,
+      input.kind,
+      content,
+      clamp(input.confidence ?? 0.5, 0, 1),
+      input.selected === true ? 1 : 0,
+      input.visible === true ? 1 : 0,
+      expiresAt,
+      at.toISOString(),
+    )
+  const row = getDb().prepare('SELECT * FROM thought WHERE id = ?').get(id) as any
+  return rowToThought(row)
+}
+
+export function listThoughts(personId = PERSON_ID, limit = 20): Thought[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM thought WHERE person_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?')
+    .all(personId, Math.min(Math.max(limit, 1), 200)) as any[]
+  return rows.map(rowToThought)
+}
+
+function rowToReflection(row: any): Reflection {
+  return {
+    id: String(row.id),
+    personId: String(row.person_id),
+    sessionId: String(row.session_id),
+    whatHappened: String(row.what_happened),
+    userState: parseJsonObject(row.user_state),
+    myState: parseJsonObject(row.my_state),
+    learned: parseJsonArray(row.learned),
+    unresolved: parseJsonArray(row.unresolved),
+    relationshipDelta: parseJsonObject(row.relationship_delta),
+    createdAt: String(row.created_at),
+  }
+}
+
+export function createReflection(input: {
+  personId?: string
+  sessionId: string
+  whatHappened: string
+  userState?: Record<string, unknown>
+  myState?: Record<string, unknown>
+  learned?: unknown[]
+  unresolved?: unknown[]
+  relationshipDelta?: Record<string, unknown>
+}): Reflection {
+  const id = nextId('r')
+  const at = nowIso()
+  getDb()
+    .prepare(
+      `INSERT INTO reflection(
+        id, person_id, session_id, what_happened, user_state, my_state,
+        learned, unresolved, relationship_delta, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.personId ?? PERSON_ID,
+      input.sessionId,
+      input.whatHappened.trim(),
+      JSON.stringify(input.userState ?? {}),
+      JSON.stringify(input.myState ?? {}),
+      JSON.stringify(input.learned ?? []),
+      JSON.stringify(input.unresolved ?? []),
+      JSON.stringify(input.relationshipDelta ?? {}),
+      at,
+    )
+  const row = getDb().prepare('SELECT * FROM reflection WHERE id = ?').get(id) as any
+  return rowToReflection(row)
+}
+
+export function listReflections(personId = PERSON_ID, limit = 10): Reflection[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM reflection WHERE person_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?')
+    .all(personId, Math.min(Math.max(limit, 1), 100)) as any[]
+  return rows.map(rowToReflection)
+}
+
+function rowToIntention(row: any): Intention {
+  return {
+    id: String(row.id),
+    personId: String(row.person_id),
+    text: String(row.text),
+    kind: String(row.kind) as IntentionKind,
+    dueAt: row.due_at ? String(row.due_at) : null,
+    status: String(row.status) as IntentionStatus,
+    sourceReflectionId: row.source_reflection_id ? String(row.source_reflection_id) : null,
+    createdAt: String(row.created_at),
+    completedAt: row.completed_at ? String(row.completed_at) : null,
+  }
+}
+
+export const MAX_ACTIVE_INTENTIONS = 3
+
+export function createIntention(input: {
+  personId?: string
+  text: string
+  kind?: IntentionKind
+  dueAt?: string | null
+  sourceReflectionId?: string | null
+}): Intention | undefined {
+  const text = input.text.trim()
+  if (text === '') return undefined
+  const personId = input.personId ?? PERSON_ID
+  const active = getDb()
+    .prepare("SELECT COUNT(*) AS n FROM intention WHERE person_id = ? AND status = 'active'")
+    .get(personId) as { n: number }
+  if (Number(active.n) >= MAX_ACTIVE_INTENTIONS) return undefined
+  const id = nextId('i')
+  const at = nowIso()
+  getDb()
+    .prepare(
+      `INSERT INTO intention(
+        id, person_id, text, kind, due_at, status, source_reflection_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
+    )
+    .run(
+      id,
+      personId,
+      text,
+      input.kind ?? 'follow_up',
+      input.dueAt ?? null,
+      input.sourceReflectionId ?? null,
+      at,
+    )
+  const row = getDb().prepare('SELECT * FROM intention WHERE id = ?').get(id) as any
+  return rowToIntention(row)
+}
+
+export function listIntentions(
+  personId = PERSON_ID,
+  status: IntentionStatus | 'all' = 'active',
+  limit = 20,
+): Intention[] {
+  const rows =
+    status === 'all'
+      ? (getDb()
+          .prepare('SELECT * FROM intention WHERE person_id = ? ORDER BY created_at DESC LIMIT ?')
+          .all(personId, limit) as any[])
+      : (getDb()
+          .prepare(
+            `SELECT * FROM intention
+             WHERE person_id = ? AND status = ?
+             ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC, created_at DESC
+             LIMIT ?`,
+          )
+          .all(personId, status, limit) as any[])
+  return rows.map(rowToIntention)
+}
+
+export function completeIntention(id: string): boolean {
+  const result = getDb()
+    .prepare("UPDATE intention SET status = 'done', completed_at = ? WHERE id = ? AND status = 'active'")
+    .run(nowIso(), id)
+  return Number(result.changes) > 0
+}
+
+export function expireIntentions(now = new Date()): number {
+  const result = getDb()
+    .prepare(
+      "UPDATE intention SET status = 'expired' WHERE status = 'active' AND due_at IS NOT NULL AND due_at < ?",
+    )
+    .run(now.toISOString())
+  return Number(result.changes)
 }

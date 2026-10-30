@@ -5,11 +5,12 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { getDbPath } from '../core/db.ts'
 import { buildBrief, buildMemoryContext, buildSystemPrompt } from '../core/inject.ts'
-import { extractSession } from '../core/extract.ts'
 import {
   chatModel,
   extractModel,
   isKeyConfigured,
+  mindMode,
+  mindModel,
   streamChat,
   type ChatMsg,
 } from '../core/llm.ts'
@@ -17,28 +18,40 @@ import { retrieve } from '../core/retrieve.ts'
 import {
   addMessage,
   closeOpenLoop,
+  completeIntention,
   countUserMessages,
   createMemory,
   createOpenLoop,
   createSession,
   deleteMemory,
+  expireIntentions,
   findExistingMemory,
   getLastUserMessageId,
   getMemory,
+  getMindState,
+  getRelationship,
   getSession,
+  listIntentions,
   listMemories,
   listMessages,
   listOpenLoops,
   listRecentMessages,
+  listReflections,
   listSessions,
   listSourceMessages,
+  listThoughts,
   logRecall,
+  reinforceMemory,
   setMemoryPinned,
   setMemoryStatus,
   stats,
-  touchMemory,
 } from '../core/store.ts'
 import type { MemoryKind, MemoryStatus, OpenLoopKind } from '../core/types.ts'
+import { deliberatePlan, type DeliberationPlan } from '../mind/deliberate.ts'
+import { buildMindSystemPrompt } from '../mind/express.ts'
+import { routeMessage } from '../mind/perceive.ts'
+import { reflectSession } from '../mind/reflect.ts'
+import { recordPlanThought } from '../mind/thoughts.ts'
 
 const PORT = Number(process.env.PORT ?? 3210)
 const HOST = '127.0.0.1'
@@ -59,7 +72,9 @@ function configView() {
     extractModel: extractModel(),
     keyConfigured: isKeyConfigured(),
     dbPath: getDbPath(),
-    phase: 'Phase 0 · 白板记忆',
+    phase: 'Phase 1 · 文本慢想',
+    mindMode: mindMode(),
+    mindModel: mindModel(),
   }
 }
 
@@ -107,8 +122,14 @@ app.post('/api/sessions/:id/extract', async (request, reply) => {
   const { id } = request.params as { id: string }
   if (getSession(id) === undefined) return reply.code(404).send({ ok: false, message: '会话不存在' })
   try {
-    const result = await extractSession(id)
-    return { ok: true, result }
+    const data = await reflectSession(id)
+    return {
+      ok: true,
+      result: data.extraction,
+      reflection: data.reflection,
+      intention: data.intention,
+      reflectionError: data.reflectionError,
+    }
   } catch (error) {
     return reply.code(400).send({ ok: false, message: messageOf(error) })
   }
@@ -139,9 +160,9 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
     .filter((hit) => !briefIds.has(hit.memory.id))
     .slice(0, topK)
   const memoryBlock = buildMemoryContext(brief, selectedHits)
-  const system = buildSystemPrompt(memoryBlock.text)
 
   for (const hit of selectedHits) {
+    // 检索只读：不再 touchMemory。强化只由显式确认/反思触发。
     logRecall({
       personId: session.personId,
       memoryId: hit.memory.id,
@@ -149,10 +170,45 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
       score: hit.final,
       injected: true,
     })
-    touchMemory(hit.memory.id)
   }
 
   const history = listRecentMessages(id, 12)
+  const mode = mindMode()
+  const mindState = getMindState(session.personId)
+  const route = routeMessage(text, mindState)
+  const deliberationInput = {
+    percept: route.percept,
+    recent: history.map((message) => ({
+      role: message.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: message.content,
+    })),
+    memoryBlock: memoryBlock.text,
+    briefText: brief.text,
+    mindState,
+    relationship: brief.relationship,
+  }
+
+  let plan: DeliberationPlan | null = null
+  let shadowPromise: Promise<void> | null = null
+  if (mode === 'on' && route.slow) {
+    try {
+      plan = (await deliberatePlan(deliberationInput)).plan
+    } catch (error) {
+      app.log.warn({ err: messageOf(error), sessionId: id }, 'slow deliberation failed; fallback to fast')
+    }
+  } else if (mode === 'shadow' && route.slow) {
+    shadowPromise = deliberatePlan(deliberationInput)
+      .then(({ plan: shadowPlan }) => {
+        recordPlanThought({ sessionId: id, turnMessageId: userMessage.id, plan: shadowPlan })
+      })
+      .catch((error) => {
+        app.log.warn({ err: messageOf(error), sessionId: id }, 'shadow deliberation failed')
+      })
+  }
+
+  const system = mode === 'off'
+    ? buildSystemPrompt(memoryBlock.text)
+    : buildMindSystemPrompt(memoryBlock.text, mindState, plan)
   const messages: ChatMsg[] = [
     { role: 'system', content: system },
     ...history.map((message) => ({
@@ -160,6 +216,27 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
       content: message.content,
     })),
   ]
+
+  const mindMeta = {
+    mode,
+    slow: route.slow,
+    reasons: route.reasons,
+    plan: plan === null
+      ? null
+      : {
+          chosen: plan.chosen,
+          tone: plan.tone,
+          thoughtSummary: plan.thoughtSummary,
+          confidence: plan.confidence,
+        },
+    state: {
+      moodValence: mindState.moodValence,
+      moodArousal: mindState.moodArousal,
+      energy: mindState.energy,
+      attention: mindState.attention,
+      currentConcern: mindState.currentConcern,
+    },
+  }
 
   reply.hijack()
   reply.raw.writeHead(200, {
@@ -193,11 +270,15 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
         norm: Number(hit.norm.toFixed(4)),
         recency: Number(hit.recency.toFixed(4)),
         salience: Number(hit.salience.toFixed(4)),
+        emotion: Number(hit.emotion.toFixed(4)),
+        reinforcement: Number(hit.reinforcement.toFixed(4)),
+        unresolved: Number(hit.unresolved.toFixed(4)),
         final: Number(hit.final.toFixed(4)),
       })),
     },
     brief: brief.text,
     memoryBlock: memoryBlock.text,
+    mind: mindMeta,
   })
 
   try {
@@ -214,12 +295,27 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
       assistant,
       turnCount,
       autoExtract,
+      autoReflect: autoExtract,
       injectedIds: memoryBlock.injectedIds,
+      mind: {
+        mode,
+        slow: route.slow,
+        thoughtRecorded: mode === 'on' && plan !== null,
+      },
     })
     reply.raw.end()
+
+    if (mode === 'on' && plan !== null) {
+      try {
+        recordPlanThought({ sessionId: id, turnMessageId: userMessage.id, plan })
+      } catch (error) {
+        app.log.warn({ err: messageOf(error), sessionId: id }, 'record thought failed')
+      }
+    }
+    if (shadowPromise !== null) void shadowPromise
     if (autoExtract) {
-      void extractSession(id).catch((error) => {
-        app.log.warn({ err: messageOf(error), sessionId: id }, 'auto extract failed')
+      void reflectSession(id).catch((error) => {
+        app.log.warn({ err: messageOf(error), sessionId: id }, 'auto reflect failed')
       })
     }
   } catch (error) {
@@ -291,6 +387,13 @@ app.post('/api/memories/:id/pin', async (request, reply) => {
   return { ok: true }
 })
 
+app.post('/api/memories/:id/reinforce', async (request, reply) => {
+  const { id } = request.params as { id: string }
+  const ok = reinforceMemory(id)
+  if (!ok) return reply.code(404).send({ ok: false, message: '记忆不存在' })
+  return { ok: true, memory: getMemory(id) }
+})
+
 app.post('/api/memories/:id/archive', async (request, reply) => {
   const { id } = request.params as { id: string }
   const ok = setMemoryStatus(id, 'archived')
@@ -340,6 +443,29 @@ app.post('/api/open-loops/:id/close', async (request, reply) => {
   return { ok: true }
 })
 
+// ── 内心 ─────────────────────────────────────────────────────
+
+app.get('/api/mind', async () => {
+  expireIntentions()
+  return {
+    ok: true,
+    mode: mindMode(),
+    model: mindModel(),
+    state: getMindState(),
+    thoughts: listThoughts(undefined, 20),
+    reflections: listReflections(undefined, 5),
+    intentions: listIntentions(undefined, 'active', 20),
+    relationship: getRelationship(),
+  }
+})
+
+app.post('/api/intentions/:id/done', async (request, reply) => {
+  const { id } = request.params as { id: string }
+  const ok = completeIntention(id)
+  if (!ok) return reply.code(404).send({ ok: false, message: '意图不存在或已完成' })
+  return { ok: true }
+})
+
 // ── 检索调试 ─────────────────────────────────────────────────
 
 app.get('/api/debug/recall', async (request) => {
@@ -361,10 +487,28 @@ app.get('/api/debug/recall', async (request) => {
       norm: Number(hit.norm.toFixed(4)),
       recency: Number(hit.recency.toFixed(4)),
       salience: Number(hit.salience.toFixed(4)),
+      emotion: Number(hit.emotion.toFixed(4)),
+      reinforcement: Number(hit.reinforcement.toFixed(4)),
+      unresolved: Number(hit.unresolved.toFixed(4)),
       final: Number(hit.final.toFixed(4)),
       selected: result.selected.some((memory) => memory.id === hit.memory.id),
       sourceMessageIds: hit.memory.sourceMessageIds,
     })),
+  }
+})
+
+app.get('/api/debug/mind', async (request) => {
+  const query = request.query as Record<string, string | undefined>
+  const q = (query.q ?? '').trim()
+  const state = getMindState()
+  const route = routeMessage(q, state)
+  return {
+    ok: true,
+    mode: mindMode(),
+    state,
+    percept: route.percept,
+    slow: route.slow,
+    reasons: route.reasons,
   }
 })
 
@@ -407,5 +551,5 @@ app.setErrorHandler((error: any, _request, reply) => {
 
 await app.listen({ port: PORT, host: HOST })
 app.log.info(
-  `companion-memory ready: http://${HOST}:${PORT} · model=${chatModel()} · key=${isKeyConfigured() ? 'configured' : 'MISSING'}`,
+  `companion-memory ready: http://${HOST}:${PORT} · model=${chatModel()} · mind=${mindMode()} · key=${isKeyConfigured() ? 'configured' : 'MISSING'}`,
 )

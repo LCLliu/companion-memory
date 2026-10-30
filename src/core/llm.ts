@@ -131,14 +131,18 @@ function stripJsonFence(raw: string): string {
   return fenced.slice(start, end + 1)
 }
 
-async function completeOnce(model: string, messages: ChatMsg[]): Promise<{ data: unknown; raw: string; model: string }> {
+async function completeOnce(
+  model: string,
+  messages: ChatMsg[],
+  temperature = 0.2,
+): Promise<{ data: unknown; raw: string; model: string }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs())
   try {
     const body: Record<string, unknown> = {
       model,
       messages,
-      temperature: 0.2,
+      temperature,
       response_format: { type: 'json_object' },
     }
     let response: Response
@@ -177,19 +181,35 @@ async function completeOnce(model: string, messages: ChatMsg[]): Promise<{ data:
   }
 }
 
+export interface CompleteJsonOptions {
+  model?: string
+  fallback?: string
+  temperature?: number
+}
+
 export async function completeJson(
   messages: ChatMsg[],
+  options: CompleteJsonOptions = {},
 ): Promise<{ data: unknown; raw: string; model: string }> {
-  const models = [extractModel(), process.env.LLM_EXTRACT_FALLBACK ?? ''].filter(
-    (model): model is string => model.trim() !== '',
-  )
+  const primary = options.model ?? extractModel()
+  const fallback = options.fallback ?? process.env.LLM_EXTRACT_FALLBACK ?? ''
+  const models = [primary, fallback].filter((model): model is string => model.trim() !== '')
   let lastError: unknown
   for (const model of models) {
     try {
-      return await completeOnce(model, messages)
+      return await completeOnce(model, messages, options.temperature ?? 0.2)
     } catch (error) {
       lastError = error
     }
   }
   throw lastError instanceof Error ? lastError : new LlmError('抽取失败')
+}
+
+export function mindModel(): string {
+  return process.env.MIND_MODEL ?? chatModel()
+}
+
+export function mindMode(): 'off' | 'shadow' | 'on' {
+  const raw = (process.env.MIND_MODE ?? 'shadow').trim().toLowerCase()
+  return raw === 'on' || raw === 'off' ? raw : 'shadow'
 }

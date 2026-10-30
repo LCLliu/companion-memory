@@ -1,4 +1,15 @@
-import type { Memory, MemoryKind, Message, OpenLoop, Session, SessionBrief } from '../core/types.ts'
+import type {
+  Intention,
+  Memory,
+  MemoryKind,
+  Message,
+  MindState,
+  OpenLoop,
+  Reflection,
+  Session,
+  SessionBrief,
+  Thought,
+} from '../core/types.ts'
 
 export interface ApiConfig {
   chatModel: string
@@ -6,6 +17,8 @@ export interface ApiConfig {
   keyConfigured: boolean
   dbPath: string
   phase: string
+  mindMode: 'off' | 'shadow' | 'on'
+  mindModel: string
 }
 
 export interface Stats {
@@ -27,6 +40,9 @@ export interface DebugItem {
   norm: number
   recency: number
   salience: number
+  emotion: number
+  reinforcement: number
+  unresolved: number
   final: number
   selected: boolean
 }
@@ -108,4 +124,54 @@ export interface ExtractResult {
 
 export interface ExtractResponse {
   result: ExtractResult
+  reflection: Reflection | null
+  intention: Intention | null
+  reflectionError?: string
+}
+
+export interface MindPayload {
+  mode: 'off' | 'shadow' | 'on'
+  model: string
+  state: MindState
+  thoughts: Thought[]
+  reflections: Reflection[]
+  intentions: Intention[]
+  relationship: Array<{ key: string; value: string; updatedAt: string }>
+}
+
+export interface MindMeta {
+  mode: 'off' | 'shadow' | 'on'
+  slow: boolean
+  reasons: string[]
+  plan: {
+    chosen: string
+    tone: string
+    thoughtSummary: string
+    confidence: number
+  } | null
+  state: {
+    moodValence: number
+    moodArousal: number
+    energy: number
+    attention: string
+    currentConcern: string
+  }
+}
+
+export interface MindPreview {
+  mode: 'off' | 'shadow' | 'on'
+  state: MindState
+  percept: {
+    intent: string
+    emotion: { label: string; valence: number; arousal: number; confidence: number }
+    urgency: number
+    relationshipCue: boolean
+    ambiguity: number
+    needs: string[]
+    risk: string
+    attachments: unknown[]
+    modalityNotes: string[]
+  }
+  slow: boolean
+  reasons: string[]
 }

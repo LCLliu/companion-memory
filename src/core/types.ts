@@ -60,6 +60,10 @@ export interface Memory {
   pinned: boolean
   accessCount: number
   lastAccess: string | null
+  unresolved: boolean
+  emotionalCharge: number
+  lastReinforced: string | null
+  sourceThoughtId: string | null
   createdAt: string
 }
 
@@ -82,12 +86,76 @@ export interface RelationshipEntry {
   updatedAt: string
 }
 
+export type MindMode = 'off' | 'shadow' | 'on'
+export type ThoughtKind =
+  | 'appraisal'
+  | 'option'
+  | 'critique'
+  | 'reflection'
+  | 'intention_candidate'
+  | 'summary'
+
+export type IntentionKind = 'follow_up' | 'repair' | 'share' | 'ask'
+export type IntentionStatus = 'active' | 'done' | 'dropped' | 'expired'
+
+export interface MindState {
+  personId: string
+  moodValence: number
+  moodArousal: number
+  energy: number
+  attention: string
+  currentConcern: string
+  updatedAt: string
+}
+
+export interface Thought {
+  id: string
+  personId: string
+  sessionId: string | null
+  turnMessageId: number | null
+  kind: ThoughtKind
+  content: string
+  confidence: number
+  selected: boolean
+  visible: boolean
+  expiresAt: string | null
+  createdAt: string
+}
+
+export interface Reflection {
+  id: string
+  personId: string
+  sessionId: string
+  whatHappened: string
+  userState: Record<string, unknown>
+  myState: Record<string, unknown>
+  learned: unknown[]
+  unresolved: unknown[]
+  relationshipDelta: Record<string, unknown>
+  createdAt: string
+}
+
+export interface Intention {
+  id: string
+  personId: string
+  text: string
+  kind: IntentionKind
+  dueAt: string | null
+  status: IntentionStatus
+  sourceReflectionId: string | null
+  createdAt: string
+  completedAt: string | null
+}
+
 export interface RecallHit {
   memory: Memory
   bm25: number
   norm: number
   recency: number
   salience: number
+  emotion: number
+  reinforcement: number
+  unresolved: number
   pinned: boolean
   final: number
 }
