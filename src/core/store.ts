@@ -325,6 +325,16 @@ export function getMemory(id: string): Memory | undefined {
   return row === undefined ? undefined : rowToMemory(row)
 }
 
+export function latestChapter(personId = PERSON_ID): Memory | undefined {
+  return listMemories({
+    personId,
+    kind: 'chapter',
+    status: 'active',
+    limit: 1,
+    orderBy: 'created_at',
+  })[0]
+}
+
 export function listMemories(opts: {
   personId?: string
   status?: MemoryStatus | 'all'

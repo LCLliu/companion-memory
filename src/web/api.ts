@@ -146,6 +146,14 @@ export interface MindPayload {
   relationshipSnapshot: RelationshipSnapshot
   contradictions: Array<Contradiction & { aText: string; bText: string }>
   maintenance: MaintenanceRun | null
+  chapter: Memory | null
+}
+
+export interface ChapterResponse {
+  skipped: boolean
+  reason?: string
+  chapter?: Memory
+  selfNarrative?: string
 }
 
 export interface MindMeta {

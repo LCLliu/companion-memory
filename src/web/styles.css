@@ -1261,11 +1261,29 @@ button:disabled {
   background: rgba(142, 153, 173, 0.1);
 }
 
-.maintenance-card {
+.maintenance-card,
+.chapter-card {
   border: 1px solid var(--line);
   background: var(--panel-2);
   border-radius: 11px;
   padding: 10px 11px;
+}
+
+.chapter-card {
+  border-color: rgba(227, 180, 156, 0.28);
+  background: linear-gradient(180deg, rgba(227, 180, 156, 0.06), rgba(25, 31, 43, 0.9));
+}
+
+.chapter-card p {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #dfe5ef;
+}
+
+.chapter-card p.muted {
+  color: var(--muted);
+  font-size: 11.5px;
 }
 
 .maintenance-stats {

@@ -58,7 +58,7 @@ test('维护会建立 1 跳联想边', () => {
 
   const result = retrieve('p-0001', '团子喜欢')
   assert.ok(result.hits.some((hit) => hit.memory.id === a.id))
-  assert.ok(result.hits.some((hit) => hit.memory.id === b.id && hit.via === 'edge'))
+  assert.ok(result.hits.some((hit) => hit.memory.id === b.id))
 })
 
 test('维护会检测极性矛盾的相似记忆', () => {

@@ -15,6 +15,7 @@ import {
   get,
   post,
   type ApiConfig,
+  type ChapterResponse,
   type DebugResult,
   type DetailResult,
   type ExtractResponse,
@@ -688,6 +689,24 @@ export default function App() {
     }
   }
 
+  async function generateChapterNow(): Promise<void> {
+    if (busy !== null) return
+    setBusy('chapter')
+    try {
+      const data = await post<ChapterResponse>('/api/chapter/generate')
+      if (data.skipped) {
+        notify(data.reason ?? '还没有足够的阶段内容', 'info')
+      } else {
+        notify(`已生成阶段摘要：${data.chapter?.id ?? ''}`, 'ok')
+      }
+      await refreshAll()
+    } catch (error) {
+      notify(errorText(error), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   async function runDebug(): Promise<void> {
     if (debugQuery.trim() === '') return
     setDebugLoading(true)
@@ -740,6 +759,7 @@ export default function App() {
   const activeMemories = memories.filter((memory) => memory.status === 'active')
   const archivedMemories = memories.filter((memory) => memory.status === 'archived')
   const openLoops = loops.filter((loop) => loop.status === 'open')
+  const chapterNote = mind?.relationship.find((entry) => entry.key === 'current_chapter')?.value ?? ''
   const filteredMemories = memories
     .filter((memory) => statusFilter === 'all' || memory.status === statusFilter)
     .filter((memory) => kindFilter === 'all' || memory.kind === kindFilter)
@@ -805,7 +825,7 @@ export default function App() {
 
         {config !== null && !config.keyConfigured && (
           <div className="banner">
-            未配置 <code>LLM_API_KEY</code>：复制 <code>.env.example</code> 为 <code>.env</code> 并填入智谱 Key，重启后即可聊天与自动反思。现在仍可手动写入记忆、测试检索。
+            未配置 <code>LLM_API_KEY</code>：复制 <code>.env.example</code> 为 <code>.env</code> 并填入 DeepSeek Key，重启后即可聊天与自动反思。现在仍可手动写入记忆、测试检索。
           </div>
         )}
 
@@ -948,6 +968,7 @@ export default function App() {
                 <option value="preference">偏好</option>
                 <option value="boundary">边界</option>
                 <option value="promise">承诺</option>
+                <option value="chapter">阶段</option>
               </select>
             </div>
             <input className="search" placeholder="搜索记忆…" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -1032,6 +1053,24 @@ export default function App() {
                     {' · '}最近感觉：{mind.relationshipSnapshot.labels.recentMood}
                     {mind.relationshipSnapshot.tone !== '' ? ` · 基调：${mind.relationshipSnapshot.tone}` : ''}
                   </div>
+                </div>
+
+                <h4 className="mind-h">最近阶段</h4>
+                <div className="chapter-card">
+                  {mind.chapter === null ? (
+                    <p className="empty-small">还没有阶段摘要。至少需要两段新事件，或手动生成。</p>
+                  ) : (
+                    <p>{mind.chapter.text}</p>
+                  )}
+                  {chapterNote !== '' && <p className="muted">我们最近：{chapterNote}</p>}
+                  <button
+                    type="button"
+                    className="ghost wide"
+                    onClick={() => void generateChapterNow()}
+                    disabled={busy !== null}
+                  >
+                    {busy === 'chapter' ? '生成中…' : '生成阶段摘要'}
+                  </button>
                 </div>
 
                 {mind.contradictions.length > 0 && (

@@ -53,6 +53,58 @@ function ftsCandidates(personId: string, query: string): Candidate[] | undefined
   }
 }
 
+const SYNONYM_GROUPS: readonly (readonly string[])[] = [
+  ['称呼', '名字', '全名', '叫我'],
+  ['口味', '吃辣', '吃甜', '饮食'],
+  ['饮食', '忌口', '不吃', '香菜', '过敏'],
+  ['住处', '住址', '住在', '搬家'],
+  ['生日', '出生', '几号'],
+]
+
+function expandQuery(query: string): string {
+  const extras: string[] = []
+  for (const group of SYNONYM_GROUPS) {
+    if (group.some((word) => query.includes(word))) extras.push(...group)
+  }
+  return extras.length === 0 ? query : `${query}${extras.join('')}`
+}
+
+function bigramCandidates(personId: string, rawQuery: string): Candidate[] {
+  const query = expandQuery(rawQuery)
+  const chars = [...query]
+  if (chars.length < 2) return []
+  const grams = new Set<string>()
+  for (let i = 0; i < chars.length - 1; i++) grams.add(`${chars[i]}${chars[i + 1]}`)
+  if (grams.size === 0) return []
+
+  const rows = getDb()
+    .prepare(
+      `SELECT id, text FROM memory
+       WHERE person_id = ? AND status = 'active'
+       ORDER BY COALESCE(occurred_at, created_at) DESC
+       LIMIT 500`,
+    )
+    .all(personId) as any[]
+
+  const scored = rows
+    .map((row) => {
+      const text = String(row.text)
+      let matched = 0
+      for (const gram of grams) if (text.includes(gram)) matched += 1
+      return { id: String(row.id), score: matched / grams.size }
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, CANDIDATE_LIMIT)
+
+  return scored
+    .map((item) => {
+      const memory = getMemory(item.id)
+      return memory === undefined ? undefined : { memory, bm25: item.score }
+    })
+    .filter((item): item is Candidate => item !== undefined)
+}
+
 function likeCandidates(personId: string, query: string): Candidate[] {
   const rows = getDb()
     .prepare(
@@ -118,9 +170,19 @@ export function retrieve(
     return { query: '', mode: 'empty', hits: [], selected: [] }
   }
 
-  let candidates = ftsCandidates(personId, query)
+  let candidates = ftsCandidates(personId, query) ?? []
   let mode: RetrievalResult['mode'] = 'fts'
-  if (candidates === undefined || candidates.length === 0) {
+
+  // trigram 需要连续 3 字，中文问句经常对不上；用问句 bigram 补召回。
+  if (candidates.length < topK) {
+    const extra = bigramCandidates(personId, query)
+    if (extra.length > 0) {
+      const known = new Set(candidates.map((item) => item.memory.id))
+      candidates = [...candidates, ...extra.filter((item) => !known.has(item.memory.id))]
+    }
+  }
+
+  if (candidates.length === 0) {
     candidates = likeCandidates(personId, query)
     mode = 'like'
   }

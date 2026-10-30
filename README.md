@@ -1,12 +1,12 @@
-# Companion Memory · Phase 3（文本慢想 + 关系 + 巩固）
+# Companion Memory · Phase 4（文本慢想 + 关系 + 巩固 + 评测）
 
-一个**本地长期陪伴记忆 + 认知循环**的 Web 应用：聊天 + SQLite 记忆 + 每轮检索注入 + 慢想路由 + 会话反思 + 关系状态 + 到期意图 follow-up + 夜间巩固 + 1 跳联想 + 矛盾检查。
+一个**本地长期陪伴记忆 + 认知循环**的 Web 应用：聊天 + SQLite 记忆 + 每轮检索注入 + 慢想路由 + 会话反思 + 关系状态 + 到期意图 follow-up + 夜间巩固 + 1 跳联想 + 矛盾检查 + 阶段摘要。
 
-当前是 Phase 3：**纯文本优先**；多模态只预留接口（见 [DESIGN.md](DESIGN.md) 13.5），QQ / 多用户推迟。
+当前是 Phase 4：**纯文本优先**；多模态只预留接口（见 [DESIGN.md](DESIGN.md) 13.5），QQ / 多用户推迟。
 
 ![Phase 2 界面](docs/screenshot-phase2.png)
 
-> 截图是 Phase 2 联调时拍的；Phase 3 新增的“维护 / 需要核对”在内心页签底部。
+> 截图是 Phase 2 联调时拍的；Phase 3/4 新增的“最近阶段 / 维护 / 需要核对”在内心页签底部。
 
 > 截图是本地联调时用临时 stub 模型和测试数据拍的；正式使用时数据库从空白开始。
 
@@ -19,8 +19,8 @@ pnpm install
 
 # Windows: copy .env.example .env
 cp .env.example .env
-# 编辑 .env，填入智谱开放平台的 LLM_API_KEY
-# 默认模型：glm-4.7-flash（免费）；后期换 DeepSeek 只改这个文件
+# 编辑 .env，填入 DeepSeek 开放平台的 LLM_API_KEY
+# 默认模型：deepseek-chat；换其他 OpenAI 兼容服务只改这个文件
 
 pnpm dev
 ```
@@ -40,14 +40,14 @@ pnpm start
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `LLM_BASE_URL` | 智谱 v4 | OpenAI 兼容的 base URL |
+| `LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容的 base URL |
 | `LLM_API_KEY` | 空 | 必填；只放本地，不进仓库 |
-| `LLM_CHAT_MODEL` | `glm-4.7-flash` | 聊天模型 |
-| `LLM_EXTRACT_MODEL` | `glm-4.7-flash` | 抽取模型 |
-| `LLM_EXTRACT_FALLBACK` | `glm-4-flash-250414` | 主抽取模型失败时的兜底 |
+| `LLM_CHAT_MODEL` | `deepseek-chat` | 聊天模型 |
+| `LLM_EXTRACT_MODEL` | `deepseek-chat` | 抽取模型 |
+| `LLM_EXTRACT_FALLBACK` | `deepseek-chat` | 主抽取模型失败时的兜底 |
 | `LLM_TIMEOUT_MS` | `60000` | 单次模型请求超时 |
 | `MIND_MODE` | `shadow` | `off` 关闭 / `shadow` 后台慢想不影响回复 / `on` 慢想参与回复 |
-| `MIND_MODEL` | `glm-4.7-flash` | 斟酌与反思用的模型 |
+| `MIND_MODEL` | `deepseek-chat` | 斟酌、反思、阶段摘要用的模型 |
 | `DB_PATH` | `./data/companion.db` | SQLite 路径 |
 | `PORT` | `3210` | API / 生产页面端口 |
 | `EXTRACT_EVERY_TURNS` | `20` | 每 N 条用户消息自动反思一次 |
@@ -73,6 +73,9 @@ pnpm start
 - **夜间维护**：启动或每 24 小时自动跑一次，也可在“内心 → 维护”手动执行；归档超过 14 天且权重低于阈值的 episode，不动 pinned 和 fact。
 - **1 跳联想**：维护时按主题相似度建 `same_topic` 边；检索从最强种子扩展 1 跳，调试面板标“联想”。
 - **矛盾检查**：相似但极性相反的事实/偏好会进入“需要核对”，聊天的记忆块也会带警告，不会自动覆盖任何一条。
+- **阶段摘要**：距上次超过 24 小时且有至少两段新事件时，用 LLM 生成 `chapter` 记忆和一句 `current_chapter` 自我叙事；内心面板可手动生成。
+- **检索增强**：trigram 命不中时用问句 bigram 补召回，并对“称呼/口味/饮食”等常见问法做小同义词扩展。
+- **离线评测**：`pnpm eval` 跑 20 条记忆探针、20 条快慢路由探针、3 组联想探针，结果写到 `docs/eval-report.md`，不调用模型。
 - **手动记忆**：右下角“记住这条”，支持类型、置顶；包含关系自动去重。
 - **记忆管理**：列表、类型/状态筛选、搜索、详情、来源对话、置顶、归档、恢复、彻底删除。
 - **未完成事项**：列表、关闭、手动添加。
@@ -130,6 +133,7 @@ src/
     perceive.ts  感知 + 快慢路由
     deliberate.ts 隐藏斟酌（JSON 计划）
     appraise.ts  情绪评估 + 心情混合
+    chapter.ts   阶段摘要 + 自我叙事
     express.ts   把斟酌结论/到期意图拼进系统提示词
     reflect.ts   会话反思 + 关系数值/心情/意图更新
     thoughts.ts  记录 thought_summary / appraisal
@@ -139,10 +143,13 @@ src/
     App.tsx      聊天 / 记忆 / 未完成 / 内心 / 调试
     api.ts       前端 API 封装
     styles.css   深色界面
+scripts/
+  eval.mjs            离线核心评测（记忆/路由/联想）
 tests/
   store.test.ts       检索、注入、归档、去重、会话计数
   mind.test.ts        强化、mind_state、关系状态、appraisal、意图到期、路由
   maintenance.test.ts 衰减归档、联想边、矛盾检测、维护幂等
+  chapter.test.ts     阶段摘要门槛与 current_chapter 写入
 ```
 
 ## 测试
@@ -153,21 +160,35 @@ pnpm test
 pnpm build
 ```
 
-当前 22 个单元测试全部通过；构建产物在 `dist/web`。
+当前 24 个单元测试全部通过；构建产物在 `dist/web`。
+
+## 评测
+
+```bash
+pnpm eval
+```
+
+当前固定探针结果：
+
+- 记忆检索 top 3：**20/20**
+- 快慢路由：**20/20**
+- 1 跳联想：**3/3**
+
+报告：`docs/eval-report.md`。这是离线核心评测，不调用模型；回答质量仍需人工或带模型的端到端评测。
 
 ## 验证记录（2026-10-30）
 
-- `pnpm typecheck`、`pnpm test`（22 项）、`pnpm build` 全部通过。
-- 浏览器里实际验证过：新建会话、流式聊天、慢想标记、情绪评估、关系状态、到期 follow-up、结束并反思、内心面板、意图完成、路由预览、确认重要、归档/恢复、维护报告、矛盾核对、检索调试、注入块预览。
-- 慢想/反思/follow-up 是用**临时本地 stub 模型**验证的，覆盖 `MIND_MODE=on` 与 `shadow` 两条路径；真实智谱 API 没有跑过。填好 `.env` 后按上面「怎么验证」走一遍即可确认。
-- 维护/联想/矛盾是纯规则逻辑，不需要模型；已验证老 episode 归档、pinned/fact 不动、边检索、极性矛盾检测、重复维护幂等。
+- `pnpm typecheck`、`pnpm test`（24 项）、`pnpm build` 全部通过。
+- 浏览器里实际验证过：新建会话、流式聊天、慢想标记、情绪评估、关系状态、到期 follow-up、结束并反思、内心面板、最近阶段、意图完成、路由预览、确认重要、归档/恢复、维护报告、矛盾核对、检索调试、注入块预览。
+- 慢想/反思/follow-up/阶段摘要用**临时本地 stub 模型**验证，覆盖 `MIND_MODE=on` 与 `shadow`；真实 DeepSeek API 没有跑过。填好 `.env` 后按上面「怎么验证」走一遍即可确认。
+- 维护/联想/矛盾/评测是纯规则逻辑，不需要模型；已验证阶段摘要自动生成、daily gate、pinned/fact 不被归档、边检索、矛盾检测、维护幂等。
 
-## Phase 3 明确不做
+## Phase 4 明确不做
 
 - 人设 / 人设蒸馏（后续）
-- 向量检索 / embedding（先用 FTS5）
-- LLM 生成的章节摘要/自我叙事（当前维护是确定性规则）
-- 冲突裁决 UI（只显示警告和“忽略”，未做逐条裁决）
+- 向量检索 / embedding（先用 FTS5 + bigram）
+- 完整自传/长期自我叙事（当前只有一句 `current_chapter`）
+- 冲突逐条裁决 UI（只显示警告和“忽略”）
 - 多模态上传 / ASR / TTS（只预留接口，见 DESIGN.md 13.5）
 - 多用户 / QQ 官方 Bot（推迟）
 - 记忆导出 Markdown / Obsidian
@@ -176,5 +197,5 @@ pnpm build
 
 完整设计见 [DESIGN.md](DESIGN.md)（慢思认知循环）；Phase 0 的历史设计见 [docs/PHASE0-DESIGN.md](docs/PHASE0-DESIGN.md)。
 
-- Phase 4：Web 文本版收尾 + 评测（20–30 条记忆探针 + 慢思考探针）。
-- 预留：多模态（见 DESIGN.md 13.5）；QQ 与多用户推迟。
+- 下一阶段可选：多模态（DESIGN.md 13.5）、QQ 官方 Bot、向量检索、完整自我叙事。
+- 评测继续扩充：30 条记忆探针 + 20 条思考探针 + 人工回答质量评分。

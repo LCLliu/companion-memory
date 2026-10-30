@@ -135,7 +135,7 @@ export function routePercept(percept: Percept, mindState: MindState): RouteDecis
     reasons.push('关系线索')
   }
   if (percept.intent === 'decide') {
-    score += 2
+    score += 3
     reasons.push('需要拿主意')
   }
   if (hits(text, BOUNDARY).length > 0) {

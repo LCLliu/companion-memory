@@ -13,7 +13,7 @@ const RELATION_LABELS: Record<string, string> = {
   tone: '最近基调',
   boundaries: '边界',
   rituals: '共同习惯',
-  current_chapter: '当前章节',
+  current_chapter: '最近阶段',
   trust_notes: '关系备注',
 }
 

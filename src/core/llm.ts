@@ -11,7 +11,7 @@ export class LlmError extends Error {
 }
 
 function baseUrl(): string {
-  return (process.env.LLM_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4').replace(/\/+$/, '')
+  return (process.env.LLM_BASE_URL ?? 'https://api.deepseek.com').replace(/\/+$/, '')
 }
 
 function apiKey(): string {
@@ -23,11 +23,11 @@ export function isKeyConfigured(): boolean {
 }
 
 export function chatModel(): string {
-  return process.env.LLM_CHAT_MODEL ?? 'glm-4.7-flash'
+  return process.env.LLM_CHAT_MODEL ?? 'deepseek-chat'
 }
 
 export function extractModel(): string {
-  return process.env.LLM_EXTRACT_MODEL ?? 'glm-4.7-flash'
+  return process.env.LLM_EXTRACT_MODEL ?? 'deepseek-chat'
 }
 
 function timeoutMs(): number {
@@ -36,7 +36,7 @@ function timeoutMs(): number {
 
 async function post(body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
   if (!isKeyConfigured()) {
-    throw new LlmError('未配置 LLM_API_KEY：请在 .env 中填入智谱 API Key')
+    throw new LlmError('未配置 LLM_API_KEY：请在 .env 中填入 DeepSeek API Key')
   }
   const response = await fetch(`${baseUrl()}/chat/completions`, {
     method: 'POST',

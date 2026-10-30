@@ -35,6 +35,7 @@ import {
   getRelationshipSnapshot,
   getSession,
   lastMaintenance,
+  latestChapter,
   listContradictions,
   listDueIntentions,
   listIntentions,
@@ -54,6 +55,7 @@ import {
   updateMindState,
 } from '../core/store.ts'
 import { runMaintenance } from '../core/maintenance.ts'
+import { generateChapter } from '../mind/chapter.ts'
 import type { MemoryKind, MemoryStatus, OpenLoopKind } from '../core/types.ts'
 import { appraiseTurn, blendMindState } from '../mind/appraise.ts'
 import { deliberatePlan, type DeliberationPlan } from '../mind/deliberate.ts'
@@ -81,7 +83,7 @@ function configView() {
     extractModel: extractModel(),
     keyConfigured: isKeyConfigured(),
     dbPath: getDbPath(),
-    phase: 'Phase 3 · 巩固与联想',
+    phase: 'Phase 4 · 阶段摘要与评测',
     mindMode: mindMode(),
     mindModel: mindModel(),
   }
@@ -161,7 +163,7 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
   if (!isKeyConfigured()) {
     return reply.code(400).send({
       ok: false,
-      message: '未配置 LLM_API_KEY：请复制 .env.example 为 .env 并填入智谱 API Key',
+      message: '未配置 LLM_API_KEY：请复制 .env.example 为 .env 并填入 DeepSeek API Key',
     })
   }
 
@@ -518,6 +520,19 @@ app.get('/api/mind', async () => {
     relationshipSnapshot: getRelationshipSnapshot(),
     contradictions,
     maintenance: lastMaintenance() ?? null,
+    chapter: latestChapter() ?? null,
+  }
+})
+
+app.post('/api/chapter/generate', async (_request, reply) => {
+  try {
+    const result = await generateChapter()
+    if (result === null) {
+      return { ok: true, skipped: true, reason: '没有足够的新事件，或距上次阶段摘要不足 24 小时' }
+    }
+    return { ok: true, skipped: false, chapter: result.memory, selfNarrative: result.selfNarrative }
+  } catch (error) {
+    return reply.code(400).send({ ok: false, message: messageOf(error) })
   }
 })
 
@@ -643,6 +658,21 @@ await app.listen({ port: PORT, host: HOST })
 app.log.info(
   `companion-memory ready: http://${HOST}:${PORT} · model=${chatModel()} · mind=${mindMode()} · key=${isKeyConfigured() ? 'configured' : 'MISSING'}`,
 )
+async function maybeGenerateChapter(): Promise<void> {
+  if (!isKeyConfigured()) return
+  try {
+    const result = await generateChapter()
+    if (result !== null) {
+      app.log.info({ chapter: result.memory.id }, 'chapter generated')
+    }
+  } catch (error) {
+    app.log.warn({ err: messageOf(error) }, 'chapter generation failed')
+  }
+}
+
 void maybeRunMaintenance('startup')
 const maintenanceTimer = setInterval(() => maybeRunMaintenance('scheduled'), 3_600_000)
 maintenanceTimer.unref()
+void maybeGenerateChapter()
+const chapterTimer = setInterval(() => void maybeGenerateChapter(), 3_600_000)
+chapterTimer.unref()
