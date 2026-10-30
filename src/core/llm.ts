@@ -123,6 +123,39 @@ export async function streamChat(
   }
 }
 
+export async function completeChat(
+  messages: ChatMsg[],
+  options: { model?: string; temperature?: number } = {},
+): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs())
+  try {
+    const response = await post(
+      {
+        model: options.model ?? chatModel(),
+        messages,
+        temperature: options.temperature ?? 0.85,
+        stream: false,
+      },
+      controller.signal,
+    )
+    const json: any = await response.json()
+    const content = json?.choices?.[0]?.message?.content
+    if (typeof content !== 'string' || content.trim() === '') {
+      throw new LlmError('模型没有返回内容（可能被限流或触发了内容策略）')
+    }
+    return content.trim()
+  } catch (error) {
+    if (error instanceof LlmError) throw error
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new LlmError(`模型请求超时（>${timeoutMs()}ms）`)
+    }
+    throw new LlmError(`模型请求失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function stripJsonFence(raw: string): string {
   const fenced = raw.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '')
   const start = fenced.indexOf('{')

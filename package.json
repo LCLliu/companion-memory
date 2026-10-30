@@ -11,7 +11,7 @@
     "build": "vite build",
     "start": "tsx src/server/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/store.test.ts tests/mind.test.ts tests/maintenance.test.ts tests/chapter.test.ts",
+    "test": "node --import tsx --test tests/store.test.ts tests/mind.test.ts tests/maintenance.test.ts tests/chapter.test.ts tests/persona.test.ts tests/chat.test.ts",
     "eval": "node --import tsx scripts/eval.mjs"
   },
   "dependencies": {

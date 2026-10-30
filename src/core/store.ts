@@ -233,6 +233,19 @@ export function listRecentMessages(sessionId: string, limit = 12): Message[] {
   return rows.reverse().map(rowToMessage)
 }
 
+export function listRecentMessagesForPerson(personId = PERSON_ID, limit = 100): Message[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT m.* FROM message m
+       JOIN chat_session s ON s.id = m.session_id
+       WHERE s.person_id = ?
+       ORDER BY m.id DESC
+       LIMIT ?`,
+    )
+    .all(personId, limit) as any[]
+  return rows.reverse().map(rowToMessage)
+}
+
 export function getMessagesAfter(sessionId: string, afterId: number, limit = 200): Message[] {
   const rows = getDb()
     .prepare('SELECT * FROM message WHERE session_id = ? AND id > ? ORDER BY id ASC LIMIT ?')

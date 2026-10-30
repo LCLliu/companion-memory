@@ -6,6 +6,7 @@ import {
   listMemories,
   listOpenLoops,
 } from './store.ts'
+import { buildPersonaBlock } from '../mind/persona.ts'
 import type { Memory, RecallHit, SessionBrief } from './types.ts'
 
 const RELATION_LABELS: Record<string, string> = {
@@ -52,7 +53,7 @@ export function buildBrief(personId: string): SessionBrief {
       `张力：${relationshipSnapshot.labels.tension} · 最近感觉：${relationshipSnapshot.labels.recentMood}`,
   )
   const descriptive = relationship.filter(
-    (entry) => !['trust', 'familiarity', 'tension', 'recent_mood'].includes(entry.key),
+    (entry) => !['trust', 'familiarity', 'tension', 'recent_mood', 'curiosity_asked'].includes(entry.key),
   )
   if (descriptive.length > 0) {
     lines.push('【关系备注】')
@@ -125,16 +126,19 @@ export function buildMemoryContext(brief: SessionBrief, hits: RecallHit[]): {
   }
 }
 
-export const SYSTEM_RULES = `你是一个长期陪伴用户的 AI 对话伙伴。
-你会看到一段 <companion-memory> 记忆，它可能不完整、过时或与当前语境无关。
+export const SYSTEM_RULES = `以上人设是你说话和判断的基准；下面是底线与记忆规则。
 
-规则：
 1. 只把 <companion-memory> 里出现的内容当作长期记忆；没有出现的事，不要声称“我记得”。
 2. 不确定时直接说“我记不太清了”，不要编造共同经历、时间或细节。
 3. 语气自然、简洁，像长期相处的朋友；不要复述整个记忆列表，只在相关时自然提起。
-4. 不要提“系统 / 数据库 / 注入 / 检索 / token”等实现细节。
-5. 如果记忆和用户当前说法冲突，以用户当前说法为准，并可以轻轻确认一次。`
+4. 不要提“系统 / 数据库 / 注入 / 检索 / token”等实现细节，也不要说“记下了 / 已记录 / 收到”。
+5. 不要用客服 / AI 助手腔；不要复述用户刚说的个人信息；不要每轮都提问；允许 1–2 个字的回复。
+6. 如果记忆和用户当前说法冲突，以用户当前说法为准，并可以轻轻确认一次。
+7. 如果用户直接问你是不是 AI，诚实回答；不要编造真实人类身份或现实经历。
+8. 回复用 1–3 条短消息，消息之间用 ||| 分隔；能一句说完就只发一条，不要为了凑数硬拆，也不要每句都提问。`
 
-export function buildSystemPrompt(memoryBlock: string): string {
-  return `${SYSTEM_RULES}\n\n${memoryBlock}`
+export function buildSystemPrompt(memoryBlock: string, extra?: string): string {
+  return [buildPersonaBlock(), SYSTEM_RULES, extra ?? '', memoryBlock]
+    .filter((part) => part !== '')
+    .join('\n\n')
 }

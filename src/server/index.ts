@@ -7,11 +7,11 @@ import { getDbPath } from '../core/db.ts'
 import { buildBrief, buildMemoryContext, buildSystemPrompt } from '../core/inject.ts'
 import {
   chatModel,
+  completeChat,
   extractModel,
   isKeyConfigured,
   mindMode,
   mindModel,
-  streamChat,
   type ChatMsg,
 } from '../core/llm.ts'
 import { retrieve } from '../core/retrieve.ts'
@@ -56,10 +56,12 @@ import {
 } from '../core/store.ts'
 import { runMaintenance } from '../core/maintenance.ts'
 import { generateChapter } from '../mind/chapter.ts'
-import type { MemoryKind, MemoryStatus, OpenLoopKind } from '../core/types.ts'
+import { splitBubbles } from '../mind/chat-format.ts'
+import type { MemoryKind, MemoryStatus, Message, OpenLoopKind } from '../core/types.ts'
 import { appraiseTurn, blendMindState } from '../mind/appraise.ts'
 import { deliberatePlan, type DeliberationPlan } from '../mind/deliberate.ts'
 import { buildFollowUpExtra, buildMindSystemPrompt } from '../mind/express.ts'
+import { generateOpening } from '../mind/opening.ts'
 import { routeMessage } from '../mind/perceive.ts'
 import { reflectSession } from '../mind/reflect.ts'
 import { recordAppraisalThought, recordPlanThought } from '../mind/thoughts.ts'
@@ -125,6 +127,19 @@ app.get('/api/sessions/:id', async (request, reply) => {
     brief: buildBrief(session.personId),
     turnCount: countUserMessages(id),
     followUp: listDueIntentions(session.personId)[0] ?? null,
+  }
+})
+
+app.post('/api/sessions/:id/opening', async (request, reply) => {
+  const { id } = request.params as { id: string }
+  if (getSession(id) === undefined) return reply.code(404).send({ ok: false, message: '会话不存在' })
+  if (!isKeyConfigured()) return { ok: true, skipped: true, reason: '未配置模型 Key' }
+  try {
+    const result = await generateOpening(id)
+    if (result === null) return { ok: true, skipped: true }
+    return { ok: true, skipped: false, messages: result.messages, kind: result.kind }
+  } catch (error) {
+    return reply.code(400).send({ ok: false, message: messageOf(error) })
   }
 })
 
@@ -319,17 +334,29 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
   })
 
   try {
-    let streamed = ''
-    const full = await streamChat(messages, (delta) => {
-      streamed += delta
-      send('delta', { text: delta })
-    })
-    void streamed
-    const assistant = addMessage(id, 'assistant', full, memoryBlock.injectedIds)
+    send('typing', {})
+    const full = await completeChat(messages, { model: chatModel(), temperature: 0.85 })
+    const bubbles = splitBubbles(full)
+    const assistants: Message[] = []
+    for (const [index, bubble] of bubbles.entries()) {
+      const assistantMessage = addMessage(
+        id,
+        'assistant',
+        bubble,
+        index === 0 ? memoryBlock.injectedIds : [],
+      )
+      assistants.push(assistantMessage)
+      send('bubble', { text: bubble, index, id: assistantMessage.id })
+      if (index < bubbles.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 220))
+      }
+    }
+    const assistant = assistants[assistants.length - 1]!
     const turnCount = countUserMessages(id)
     const autoExtract = turnCount % EXTRACT_EVERY === 0
     send('done', {
       assistant,
+      assistants,
       turnCount,
       autoExtract,
       autoReflect: autoExtract,

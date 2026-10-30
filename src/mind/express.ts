@@ -1,4 +1,4 @@
-import { SYSTEM_RULES } from '../core/inject.ts'
+import { buildSystemPrompt } from '../core/inject.ts'
 import type { Intention, MindState } from '../core/types.ts'
 import type { DeliberationPlan } from './deliberate.ts'
 
@@ -40,7 +40,7 @@ export function buildMindSystemPrompt(
   mindState: MindState,
   plan: DeliberationPlan | null,
 ): string {
-  return `${SYSTEM_RULES}\n\n${buildMindExtra(mindState, plan)}\n\n${memoryBlock}`
+  return buildSystemPrompt(memoryBlock, buildMindExtra(mindState, plan))
 }
 
 export function buildFollowUpExtra(intention: Intention): string {

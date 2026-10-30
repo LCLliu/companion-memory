@@ -321,7 +321,7 @@ export default function App() {
   const [rememberPin, setRememberPin] = useState(false)
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
-  const [streamText, setStreamText] = useState('')
+  const [streamBubbles, setStreamBubbles] = useState<string[]>([])
   const [injected, setInjected] = useState<{ id: string; kind: string; text: string }[]>([])
   const [debugQuery, setDebugQuery] = useState('')
   const [debugResult, setDebugResult] = useState<DebugResult | null>(null)
@@ -345,7 +345,7 @@ export default function App() {
     const element = chatScrollRef.current
     if (element === null) return
     element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' })
-  }, [messages, streamText])
+  }, [messages, streamBubbles])
 
   useEffect(() => {
     if (toast === null) return
@@ -423,7 +423,18 @@ export default function App() {
       setBrief(data.brief)
       setFollowUp(data.followUp ?? null)
       setInjected([])
-      setStreamText('')
+      setMindMeta(null)
+      setStreamBubbles([])
+      setStreaming(true)
+      try {
+        const opening = await post<{ skipped: boolean }>(`/api/sessions/${data.session.id}/opening`)
+        if (opening.skipped !== true) await loadSession(data.session.id)
+      } catch (error) {
+        notify(errorText(error), 'error')
+      } finally {
+        setStreaming(false)
+        setStreamBubbles([])
+      }
     } catch (error) {
       notify(errorText(error), 'error')
     }
@@ -444,7 +455,7 @@ export default function App() {
     setMessages((prev) => [...prev, temp])
     setInput('')
     setStreaming(true)
-    setStreamText('')
+    setStreamBubbles([])
     setInjected([])
     setMindMeta(null)
 
@@ -493,9 +504,9 @@ export default function App() {
             if (typeof payload.brief === 'string') {
               setBrief((prev) => (prev === null ? prev : { ...prev, text: payload.brief }))
             }
-          } else if (event === 'delta') {
-            if (typeof payload.text === 'string') {
-              setStreamText((prev) => prev + payload.text)
+          } else if (event === 'bubble') {
+            if (typeof payload.text === 'string' && payload.text.trim() !== '') {
+              setStreamBubbles((prev) => [...prev, payload.text])
             }
           } else if (event === 'done') {
             if (payload.autoReflect === true || payload.autoExtract === true) {
@@ -520,7 +531,7 @@ export default function App() {
       }
     } finally {
       setStreaming(false)
-      setStreamText('')
+      setStreamBubbles([])
       setInjected([])
     }
   }
@@ -834,7 +845,7 @@ export default function App() {
             <div className="followup-card">
               <span className="badge followup">想问你</span>
               <p>{followUp.text}</p>
-              <span className="hint">会在你开口时自然提起，不会单独发消息</span>
+              <span className="hint">新会话她会先开口问起；在当前会话里也会自然提起</span>
             </div>
           )}
 
@@ -867,40 +878,63 @@ export default function App() {
           ))}
 
           {streaming && (
-            <div className="msg assistant streaming">
-              <div className="msg-meta">
-                <span>AI</span>
-                <span>正在回复…</span>
-              </div>
-              <div className="msg-body">
-                {streamText}
-                <span className="cursor">▍</span>
-              </div>
-              {injected.length > 0 && (
-                <div className="msg-chips">
-                  {injected.map((item) => (
-                    <span className="chip" key={item.id} title={item.text}>
-                      {item.id} · {KIND_LABEL[item.kind] ?? item.kind}
-                    </span>
-                  ))}
+            <div className="stream-bubbles">
+              {streamBubbles.length === 0 ? (
+                <div className="msg assistant streaming">
+                  <div className="msg-meta">
+                    <span>AI</span>
+                    <span>正在输入…</span>
+                  </div>
+                  <div className="msg-body">
+                    <span className="cursor">▍</span>
+                  </div>
+                  {injected.length > 0 && (
+                    <div className="msg-chips">
+                      {injected.map((item) => (
+                        <span className="chip" key={item.id} title={item.text}>
+                          {item.id} · {KIND_LABEL[item.kind] ?? item.kind}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {mindMeta !== null && (
+                    <div className={`mind-trace ${mindMeta.slow ? 'slow' : 'fast'}`}>
+                      {mindMeta.mode === 'off'
+                        ? '快速回应'
+                        : mindMeta.slow
+                          ? mindMeta.plan !== null
+                            ? `慢想：${mindMeta.plan.chosen}`
+                            : '影子慢想中（不影响回复）'
+                          : '快速回应'}
+                    </div>
+                  )}
                 </div>
-              )}
-              {mindMeta !== null && (
-                <div className={`mind-trace ${mindMeta.slow ? 'slow' : 'fast'}`}>
-                  {mindMeta.mode === 'off'
-                    ? '快速回应'
-                    : mindMeta.slow
-                      ? mindMeta.plan !== null
-                        ? `慢想：${mindMeta.plan.chosen}`
-                        : '影子慢想中（不影响回复）'
-                      : '快速回应'}
-                </div>
-              )}
-              {mindMeta?.appraisal !== null && mindMeta?.appraisal !== undefined && (
-                <div className="mind-trace appraisal">她感觉到：{mindMeta.appraisal.label} · {mindMeta.appraisal.summary}</div>
-              )}
-              {mindMeta?.followUp !== null && mindMeta?.followUp !== undefined && (
-                <div className="mind-trace followup">她本来想问你：{mindMeta.followUp.text}</div>
+              ) : (
+                streamBubbles.map((text, index) => (
+                  <div className="msg assistant" key={`${index}-${text.slice(0, 8)}`}>
+                    <div className="msg-meta">
+                      <span>AI</span>
+                    </div>
+                    <div className="msg-body">{text}</div>
+                    {index === streamBubbles.length - 1 && injected.length > 0 && (
+                      <div className="msg-chips">
+                        {injected.map((item) => (
+                          <span className="chip" key={item.id} title={item.text}>
+                            {item.id} · {KIND_LABEL[item.kind] ?? item.kind}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {index === streamBubbles.length - 1 && mindMeta?.appraisal !== null && mindMeta?.appraisal !== undefined && (
+                      <div className="mind-trace appraisal">
+                        她感觉到：{mindMeta.appraisal.label} · {mindMeta.appraisal.summary}
+                      </div>
+                    )}
+                    {index === streamBubbles.length - 1 && mindMeta?.followUp !== null && mindMeta?.followUp !== undefined && (
+                      <div className="mind-trace followup">她本来想问你：{mindMeta.followUp.text}</div>
+                    )}
+                  </div>
+                ))
               )}
             </div>
           )}

@@ -352,6 +352,13 @@ button:disabled {
   font-size: 13px;
 }
 
+.stream-bubbles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
 .msg {
   max-width: min(78%, 720px);
   display: flex;
