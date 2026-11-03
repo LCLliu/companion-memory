@@ -29,7 +29,7 @@ export function buildMindExtra(mindState: MindState, plan: DeliberationPlan | nu
     }
     lines.push('- 不要提“慢想 / 内心 / 思考过程 / 系统判断”，直接自然地回应。')
   } else {
-    lines.push('', '【本轮是快速回应】不要过度解读，保持自然、简短。')
+    lines.push('', '【本轮是快速回应】保持自然。')
   }
 
   return lines.join('\n')

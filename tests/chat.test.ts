@@ -9,17 +9,15 @@ beforeEach(() => {
   resetDbForTests(':memory:')
 })
 
-test('splitBubbles：按 ||| 拆成多条短消息', () => {
-  assert.deepEqual(splitBubbles('嗯。|||你呢？'), ['嗯。', '你呢？'])
+test('splitBubbles：按 ||| 拆成短消息', () => {
+  assert.deepEqual(splitBubbles('嗯 我在|||你呢'), ['嗯 我在', '你呢'])
   assert.deepEqual(splitBubbles('  A  |||  ||| B  '), ['A', 'B'])
   assert.deepEqual(splitBubbles('只有一条'), ['只有一条'])
   assert.deepEqual(splitBubbles('   '), [])
 })
 
-test('splitBubbles：超过上限时把剩余并进最后一条', () => {
-  const result = splitBubbles('一|||二|||三|||四', 3)
-  assert.equal(result.length, 3)
-  assert.deepEqual(result, ['一', '二', '三 四'])
+test('splitBubbles：不人为限制消息条数', () => {
+  assert.deepEqual(splitBubbles('一|||二|||三|||四|||五'), ['一', '二', '三', '四', '五'])
 })
 
 test('curiosity：先问未知话题，问过就不再重复', () => {

@@ -34,12 +34,12 @@ export async function generateOpening(sessionId: string): Promise<OpeningResult 
   const extra = [
     '【主动开场】',
     '- 这是你主动发起的一次对话，不是回复用户。',
-    '- 只发 1–2 条短消息，用 ||| 分隔；短、自然，不要客服腔。',
+    '- 像手机上刚想起对方，自然决定发几条；用 ||| 分隔，默认少用句号。',
+    '- 有想问的就自然问，不为了续话题硬问。',
     '- 不要提“系统 / 记忆 / 意图 / 提醒 / follow-up”。',
     followUp !== null
       ? `- 你之前想问他：${followUp.text}`
       : `- 你想更了解他：${curiosity!.question}`,
-    '- 最多问一个问题；如果对方更想聊别的，就把话题让出去。',
   ].join('\n')
 
   const full = await completeChat(
@@ -50,7 +50,7 @@ export async function generateOpening(sessionId: string): Promise<OpeningResult 
     { model: chatModel(), temperature: 0.8 },
   )
 
-  const bubbles = splitBubbles(full, 2)
+  const bubbles = splitBubbles(full)
   const messages = bubbles.map((text) => addMessage(sessionId, 'assistant', text, []))
   if (followUp !== null) claimIntentionSurface(followUp.id)
   if (curiosity !== null) markCuriosityAsked(session.personId, curiosity.key)

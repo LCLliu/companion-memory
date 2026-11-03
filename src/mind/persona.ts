@@ -3,9 +3,10 @@ import { fileURLToPath } from 'node:url'
 
 const SELF_PATH = fileURLToPath(new URL('../../persona/self.md', import.meta.url))
 const VOICE_PATH = fileURLToPath(new URL('../../persona/voice.md', import.meta.url))
-const MAX_CHARS = 2600
+const LIFE_PATH = fileURLToPath(new URL('../../persona/life.md', import.meta.url))
+const MAX_CHARS = 4200
 
-const FALLBACK = `你是小满，一个慢热、嘴硬心软的人。说话短，不装客服，不每轮提问，不编造共同经历。`
+const FALLBACK = `你是小满，一个慢热、越熟越甜的人。像手机聊天，默认少用句号。不安会说出来，也会自己缓一缓。`
 
 function readText(path: string): string {
   try {
@@ -22,7 +23,8 @@ function readText(path: string): string {
 export function buildPersonaBlock(): string {
   const self = readText(SELF_PATH)
   const voice = readText(VOICE_PATH)
-  const body = [self, voice].filter((part) => part !== '').join('\n\n')
+  const life = readText(LIFE_PATH)
+  const body = [self, voice, life].filter((part) => part !== '').join('\n\n')
   const text = body === '' ? FALLBACK : body
   const capped = text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}\n…（人设卡过长，已截断）` : text
   return `<persona>\n${capped}\n</persona>`
