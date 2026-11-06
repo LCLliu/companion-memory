@@ -18,6 +18,17 @@ const RELATION_LABELS: Record<string, string> = {
   trust_notes: '关系备注',
 }
 
+const KIND_LABEL: Record<string, string> = {
+  episode: '事件',
+  fact: '事实',
+  preference: '偏好',
+  boundary: '边界',
+  promise: '承诺',
+  relationship: '关系',
+  chapter: '阶段',
+  self_fact: '她自己',
+}
+
 function truncate(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max)}…` : flat
@@ -45,6 +56,13 @@ export function buildBrief(personId: string): SessionBrief {
     limit: 5,
     orderBy: 'salience',
   })
+  const selfFacts = listMemories({
+    personId,
+    kind: 'self_fact',
+    status: 'active',
+    limit: 4,
+    orderBy: 'salience',
+  })
 
   const lines: string[] = []
   lines.push('【关系状态】')
@@ -59,6 +77,12 @@ export function buildBrief(personId: string): SessionBrief {
     lines.push('【关系备注】')
     for (const entry of descriptive) {
       lines.push(`- ${RELATION_LABELS[entry.key] ?? entry.key}：${truncate(entry.value, 100)}`)
+    }
+  }
+  if (selfFacts.length > 0) {
+    lines.push('【她自己记得的事】')
+    for (const memory of selfFacts) {
+      lines.push(`- ${dateOf(memory)} [${memory.id}] ${truncate(memory.text, 80)}`)
     }
   }
   const contradictions = listContradictions(personId, 'pending', 5)
@@ -94,6 +118,7 @@ export function buildBrief(personId: string): SessionBrief {
     relationship,
     openLoops,
     episodes,
+    selfFacts,
     pinned,
     text: lines.join('\n'),
   }
@@ -105,7 +130,7 @@ export function buildMemoryContext(brief: SessionBrief, hits: RecallHit[]): {
 } {
   // 简报里已经出现的记忆（置顶 / 最近事件）不再重复进“相关记忆”，
   // 否则同一个 id 会在同一块里出现两次，白花 token。
-  const briefIds = new Set([...brief.pinned, ...brief.episodes].map((memory) => memory.id))
+  const briefIds = new Set([...brief.pinned, ...brief.episodes, ...brief.selfFacts].map((memory) => memory.id))
   const relevant = hits.filter((hit) => !briefIds.has(hit.memory.id))
 
   const lines: string[] = []
@@ -114,7 +139,9 @@ export function buildMemoryContext(brief: SessionBrief, hits: RecallHit[]): {
     lines.push('【可能相关的记忆】')
     for (const hit of relevant) {
       const { memory } = hit
-      lines.push(`- [${memory.id}] (${memory.kind} · ${dateOf(memory)}) ${truncate(memory.text, 120)}`)
+      lines.push(
+        `- [${memory.id}] (${KIND_LABEL[memory.kind] ?? memory.kind} · ${dateOf(memory)}) ${truncate(memory.text, 120)}`,
+      )
     }
   }
   const body = lines.length > 0 ? lines.join('\n') : '（暂无长期记忆）'

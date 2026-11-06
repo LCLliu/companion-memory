@@ -29,7 +29,7 @@ const EpisodeSchema = z
   .nullable()
 
 const FactSchema = z.object({
-  kind: z.enum(['fact', 'preference', 'boundary', 'promise', 'relationship']).default('fact'),
+  kind: z.enum(['fact', 'preference', 'boundary', 'promise', 'relationship', 'self_fact']).default('fact'),
   text: z.string().min(2),
   confidence: z.number().min(0).max(1).default(0.8),
   valid_from: z.string().optional().nullable(),
@@ -66,16 +66,21 @@ export interface ExtractionResult {
 
 const EXTRACT_SYSTEM = `你是长期陪伴记忆系统的抽取器。只输出 JSON，不要解释、不要 markdown 代码块。
 
-任务：从对话中抽取值得长期记住的内容。
+任务：从对话中抽取值得长期记住的内容。这些记忆是她自己的记忆：既记他说过的事，也记她说过的事。
 
 规则：
-1. 只抽用户明确表达的事实、偏好、边界、承诺；不要抽 AI 自己的话，不要推测。
-2. 每条 fact / open_loop 必须带 source_message_ids，值是对话里 [#id] 的数字。
-3. 没有值得记的就返回 "episode": null 和空数组。
-4. episode.summary 一到三句话，只写发生了什么；valence -1..1，arousal 0..1，salience 0..1。
-5. 不记寒暄、一次性情绪、临时任务状态、模型自己的推测。
-6. 事实可能变化：职位、住址、关系状态可带 valid_from；不确定就不填。
-7. relationship_updates 只允许这些键：nickname、tone、boundaries、rituals、current_chapter、trust_notes。
+1. 他明确表达的事实、偏好、边界、承诺 → kind 用 fact / preference / boundary / promise / relationship。
+2. 她自己在对话里主动说出的关于自己的事 → kind 一律用 self_fact：她正在做的事、她的生活细节、她的喜好、她的决定、她对自己的判断（例：“我说我手上有个要改很久的东西”“我说我奶茶喜欢三分糖”）。
+3. self_fact 只抽她说得明确、以后还用得上的；为了接话的临时敷衍、玩笑、夸张不算，不确定就不抽，confidence 给 0.6 以下。
+4. 不要推测双方没说过的话。
+5. 每条 fact / self_fact / open_loop 必须带 source_message_ids，值是对话里 [#id] 的数字。
+6. 没有值得记的就返回 "episode": null 和空数组。
+7. episode.summary 一到三句话，只写发生了什么；valence -1..1，arousal 0..1，salience 0..1。
+8. 不记寒暄、一次性情绪、临时任务状态。
+9. 事实可能变化：职位、住址、关系状态可带 valid_from；不确定就不填。
+10. relationship_updates 只允许这些键：nickname、tone、boundaries、rituals、current_chapter、trust_notes。
+11. 这些文字是她以后自己要重读的记忆，不是第三方案卷：用她的口吻写，提到自己用“我”，提到对方用他的名字或称呼（例：“阿隆说他给我装过记忆系统”“我希望被叫阿隆”）。
+12. 不要出现“用户”“助手”“AI”“该用户”“对方表示”这类词；不确定性别就用名字，别硬猜代词。
 
 输出结构：
 {
@@ -88,7 +93,7 @@ const EXTRACT_SYSTEM = `你是长期陪伴记忆系统的抽取器。只输出 J
   },
   "facts": [
     {
-      "kind": "fact | preference | boundary | promise | relationship",
+      "kind": "fact | preference | boundary | promise | relationship | self_fact",
       "text": "一句话",
       "confidence": 0.9,
       "valid_from": null,
@@ -226,7 +231,7 @@ async function extractSessionInner(sessionId: string): Promise<ExtractionResult>
         text: fact.text.trim(),
         validFrom: validDate(fact.valid_from),
         validTo: validDate(fact.valid_to),
-        salience: kind === 'boundary' || kind === 'promise' ? 0.85 : 0.55,
+        salience: kind === 'boundary' || kind === 'promise' ? 0.85 : kind === 'self_fact' ? 0.6 : 0.55,
         confidence: fact.confidence,
         sourceSessionId: session.id,
         sourceMessageIds: fact.source_message_ids.filter((id) => validIds.has(id)),

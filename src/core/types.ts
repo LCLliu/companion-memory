@@ -6,6 +6,7 @@ export type MemoryKind =
   | 'promise'
   | 'relationship'
   | 'chapter'
+  | 'self_fact'
 
 export type MemoryStatus = 'active' | 'superseded' | 'archived' | 'pending_review'
 
@@ -221,6 +222,7 @@ export interface SessionBrief {
   relationship: RelationshipEntry[]
   openLoops: OpenLoop[]
   episodes: Memory[]
+  selfFacts: Memory[]
   pinned: Memory[]
   text: string
 }

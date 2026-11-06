@@ -12,7 +12,9 @@
     "start": "tsx src/server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/store.test.ts tests/mind.test.ts tests/maintenance.test.ts tests/chapter.test.ts tests/persona.test.ts tests/chat.test.ts tests/llm.test.ts",
-    "eval": "node --import tsx scripts/eval.mjs"
+    "eval": "node --import tsx scripts/eval.mjs",
+    "migrate:voice": "node --import tsx scripts/revoice-memories.ts",
+    "export:obsidian": "node --import tsx scripts/export-obsidian.ts"
   },
   "dependencies": {
     "@fastify/static": "^8.2.0",

@@ -50,6 +50,20 @@ test('置顶记忆与未完成事项进入会话简报', () => {
   assert.equal(brief.openLoops.length, 1)
 })
 
+test('她自己说过的话也进记忆，并常驻会话简报', () => {
+  createMemory({ kind: 'self_fact', text: '我说我手上有个要改很久的东西' })
+  createMemory({ kind: 'fact', text: '阿隆是学生，有导师' })
+
+  const brief = buildBrief('p-0001')
+  assert.match(brief.text, /【她自己记得的事】/)
+  assert.match(brief.text, /要改很久的东西/)
+  assert.equal(brief.selfFacts.length, 1)
+
+  const hits = retrieve('p-0001', '阿隆').hits.filter((hit) => hit.memory.kind === 'fact')
+  const block = buildMemoryContext(brief, hits)
+  assert.match(block.text, /\(事实 ·/)
+})
+
 test('记忆块包含注入 id 和闭合标签', () => {
   const memory = createMemory({ kind: 'preference', text: '我喜欢喝冰美式' })
   const result = retrieve('p-0001', '冰美式')

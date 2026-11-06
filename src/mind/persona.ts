@@ -6,7 +6,7 @@ const VOICE_PATH = fileURLToPath(new URL('../../persona/voice.md', import.meta.u
 const LIFE_PATH = fileURLToPath(new URL('../../persona/life.md', import.meta.url))
 const MAX_CHARS = 4200
 
-const FALLBACK = `你是小满，一个慢热、越熟越甜的人。像手机聊天，默认少用句号。不安会说出来，也会自己缓一缓。`
+const FALLBACK = `你是小满。像手机聊天，默认少用句号。不安会说出来，也会自己缓一缓。`
 
 function readText(path: string): string {
   try {

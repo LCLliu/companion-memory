@@ -187,6 +187,64 @@ export interface MaintenanceResponse {
   run: MaintenanceRun
 }
 
+export interface BrainRegion {
+  id: string
+  label: string
+  description: string
+  x: number
+  y: number
+}
+
+export interface BrainNode {
+  id: string
+  type: 'region' | 'memory' | 'message' | 'reflection' | 'intention' | 'thought'
+  label: string
+  description?: string
+  kind?: string
+  status?: string
+  text?: string
+  salience?: number
+  confidence?: number
+  pinned?: boolean
+  unresolved?: boolean
+  createdAt?: string
+  strength?: number
+  accessCount?: number
+  lastReinforced?: string | null
+  ageDays?: number
+  halfLifeDays?: number
+  curve?: number[]
+  x?: number
+  y?: number
+}
+
+export interface BrainLink {
+  source: string
+  target: string
+  kind: 'region' | 'edge' | 'recall' | 'contradiction' | 'message' | 'inner'
+  weight: number
+}
+
+export interface BrainGraphPayload {
+  regions: BrainRegion[]
+  nodes: BrainNode[]
+  links: BrainLink[]
+  stats: {
+    nodes: number
+    links: number
+    sessions: number
+    messages: number
+    activeMemories: number
+    archivedMemories: number
+    edges: number
+    recallLinks: number
+    contradictions: number
+    reflections: number
+    intentions: number
+    thoughts: number
+  }
+}
+
 export interface MindPreview {
   mode: 'off' | 'shadow' | 'on'
   state: MindState

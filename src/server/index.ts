@@ -54,6 +54,7 @@ import {
   stats,
   updateMindState,
 } from '../core/store.ts'
+import { buildBrainGraph } from '../core/brain.ts'
 import { runMaintenance } from '../core/maintenance.ts'
 import { generateChapter } from '../mind/chapter.ts'
 import { splitBubbles } from '../mind/chat-format.ts'
@@ -548,6 +549,17 @@ app.get('/api/mind', async () => {
     contradictions,
     maintenance: lastMaintenance() ?? null,
     chapter: latestChapter() ?? null,
+  }
+})
+
+app.get('/api/brain', async (request) => {
+  const query = request.query as Record<string, string | undefined>
+  return {
+    ok: true,
+    ...buildBrainGraph({
+      includeMessages: query.messages === '1',
+      includeInner: query.inner !== '0',
+    }),
   }
 })
 

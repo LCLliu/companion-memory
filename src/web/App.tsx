@@ -26,6 +26,7 @@ import {
   type RememberResult,
   type SessionDetail,
 } from './api.ts'
+import BrainGraph from './BrainGraph.tsx'
 
 type ToastKind = 'ok' | 'info' | 'error'
 type Tab = 'memories' | 'loops' | 'mind' | 'debug'
@@ -54,6 +55,7 @@ const KIND_LABEL: Record<string, string> = {
   promise: '承诺',
   relationship: '关系',
   chapter: '章节',
+  self_fact: '她自己',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -169,6 +171,7 @@ function RememberModal({
               <option value="boundary">边界</option>
               <option value="promise">承诺</option>
               <option value="relationship">关系</option>
+              <option value="self_fact">她自己</option>
             </select>
           </label>
           <label className="checkbox">
@@ -334,6 +337,7 @@ export default function App() {
   const [mindQuery, setMindQuery] = useState('')
   const [mindPreview, setMindPreview] = useState<MindPreview | null>(null)
   const [mindLoading, setMindLoading] = useState(false)
+  const [graphOpen, setGraphOpen] = useState(false)
   const [toast, setToast] = useState<{ text: string; kind: ToastKind } | null>(null)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -828,6 +832,9 @@ export default function App() {
             <span className="model-pill">
               {config?.chatModel ?? '—'} · {MODE_LABEL[config?.mindMode ?? 'off']}
             </span>
+            <button type="button" className="ghost" onClick={() => setGraphOpen(true)}>
+              脑图
+            </button>
             <button type="button" className="ghost" onClick={() => void runExtract()} disabled={session === null || busy !== null}>
               {busy === 'extract' ? '反思中…' : '结束并反思'}
             </button>
@@ -1003,6 +1010,7 @@ export default function App() {
                 <option value="boundary">边界</option>
                 <option value="promise">承诺</option>
                 <option value="chapter">阶段</option>
+                <option value="self_fact">她自己</option>
               </select>
             </div>
             <input className="search" placeholder="搜索记忆…" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -1335,6 +1343,8 @@ export default function App() {
           onDelete={(memory) => void hardDelete(memory)}
         />
       )}
+
+      {graphOpen && <BrainGraph onClose={() => setGraphOpen(false)} />}
 
       {toast !== null && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>
