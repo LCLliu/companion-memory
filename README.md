@@ -46,6 +46,7 @@ pnpm start
 | `LLM_EXTRACT_MODEL` | `deepseek-chat` | 抽取模型 |
 | `LLM_EXTRACT_FALLBACK` | `deepseek-chat` | 主抽取模型失败时的兜底 |
 | `LLM_TIMEOUT_MS` | `60000` | 单次模型请求超时 |
+| `LLM_RETRY_ATTEMPTS` | `3` | 503/429 等临时故障的总尝试次数 |
 | `MIND_MODE` | `shadow` | `off` 关闭 / `shadow` 后台慢想不影响回复 / `on` 慢想参与回复 |
 | `MIND_MODEL` | `deepseek-chat` | 斟酌、反思、阶段摘要用的模型 |
 | `DB_PATH` | `./data/companion.db` | SQLite 路径 |
@@ -186,7 +187,7 @@ pnpm test
 pnpm build
 ```
 
-当前 29 个单元测试全部通过；构建产物在 `dist/web`。
+当前 30 个单元测试全部通过；构建产物在 `dist/web`。
 
 ## 评测
 
@@ -204,7 +205,7 @@ pnpm eval
 
 ## 验证记录（2026-10-30）
 
-- `pnpm typecheck`、`pnpm test`（29 项）、`pnpm build` 全部通过。
+- `pnpm typecheck`、`pnpm test`（30 项）、`pnpm build` 全部通过。
 - 浏览器里实际验证过：新建会话（她主动开场）、自然分泡聊天、慢想标记、情绪评估、关系状态、到期 follow-up、结束并反思、内心面板、最近阶段、意图完成、路由预览、确认重要、归档/恢复、维护报告、矛盾核对、检索调试、注入块预览。
 - 人设初版已用**真实 DeepSeek** 验证：新会话开场自然分成三条，不带句号：
   - “刚刚路过那条街 又看到那只胖猫了 趴在电动车座上不肯下来”
@@ -212,6 +213,7 @@ pnpm eval
   - “对了 我好像一直不知道怎么叫你比较顺口”
 - 同一条真实聊天测试回复：“改图真的会这样 越改越觉得哪里都不对 最后看什么都是错的”，没有客服腔，也没有固定模板。
 - `splitBubbles` 已去掉人为合并上限；消息数量由模型当下想说的话决定。
+- DeepSeek 503/429 这类临时过载会自动重试，默认总尝试 3 次；仍失败时提示“模型服务暂时繁忙”。
 
 ## 当前人设边界
 

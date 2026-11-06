@@ -4,11 +4,16 @@ export interface ChatMsg {
 }
 
 export class LlmError extends Error {
-  constructor(message: string) {
+  status?: number
+
+  constructor(message: string, status?: number) {
     super(message)
     this.name = 'LlmError'
+    this.status = status
   }
 }
+
+const RETRY_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504])
 
 function baseUrl(): string {
   return (process.env.LLM_BASE_URL ?? 'https://api.deepseek.com').replace(/\/+$/, '')
@@ -34,6 +39,63 @@ function timeoutMs(): number {
   return Number(process.env.LLM_TIMEOUT_MS ?? 60_000)
 }
 
+function retryAttempts(): number {
+  return Math.max(1, Number(process.env.LLM_RETRY_ATTEMPTS ?? 3))
+}
+
+function friendlyHttpMessage(status: number, detail: string): string {
+  if (status === 503) {
+    return `模型服务暂时繁忙（503）：官方接口过载，通常稍后重试即可。${detail.slice(0, 180)}`
+  }
+  if (status === 429) {
+    return `模型请求过于频繁（429）：请降低频率或稍后重试。${detail.slice(0, 180)}`
+  }
+  return `模型接口返回 ${status}：${detail.slice(0, 300)}`
+}
+
+function isTransient(error: unknown): boolean {
+  return error instanceof LlmError && error.status !== undefined && RETRY_STATUSES.has(error.status)
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(createAbortError())
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(createAbortError())
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function createAbortError(): Error {
+  const error = new Error('aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+async function postWithRetry(body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
+  const attempts = retryAttempts()
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await post(body, signal)
+    } catch (error) {
+      lastError = error
+      if (!isTransient(error) || attempt === attempts - 1) break
+      await sleep(Math.min(8_000, 700 * 2 ** attempt), signal)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new LlmError('模型请求失败')
+}
+
 async function post(body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
   if (!isKeyConfigured()) {
     throw new LlmError('未配置 LLM_API_KEY：请在 .env 中填入 DeepSeek API Key')
@@ -49,7 +111,7 @@ async function post(body: Record<string, unknown>, signal: AbortSignal): Promise
   })
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
-    throw new LlmError(`模型接口返回 ${response.status}：${detail.slice(0, 300)}`)
+    throw new LlmError(friendlyHttpMessage(response.status, detail), response.status)
   }
   return response
 }
@@ -74,7 +136,7 @@ export async function streamChat(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs())
   try {
-    const response = await post(
+    const response = await postWithRetry(
       {
         model: options.model ?? chatModel(),
         messages,
@@ -130,7 +192,7 @@ export async function completeChat(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs())
   try {
-    const response = await post(
+    const response = await postWithRetry(
       {
         model: options.model ?? chatModel(),
         messages,
@@ -180,12 +242,12 @@ async function completeOnce(
     }
     let response: Response
     try {
-      response = await post(body, controller.signal)
+      response = await postWithRetry(body, controller.signal)
     } catch (error) {
       // 有些兼容接口不支持 response_format，去掉后重试一次
       if (error instanceof LlmError && /返回 400/.test(error.message)) {
         delete body.response_format
-        response = await post(body, controller.signal)
+        response = await postWithRetry(body, controller.signal)
       } else {
         throw error
       }
