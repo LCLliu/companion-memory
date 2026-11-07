@@ -4,6 +4,7 @@ import type {
   Memory,
   MemoryKind,
   Message,
+  MessageAttachment,
   OpenLoop,
   Reflection,
   Session,
@@ -27,6 +28,7 @@ import {
   type SessionDetail,
 } from './api.ts'
 import BrainGraph from './BrainGraph.tsx'
+import { AttachmentView, StickerPanel, visibleText } from './StickerPanel.tsx'
 
 type ToastKind = 'ok' | 'info' | 'error'
 type Tab = 'memories' | 'loops' | 'mind' | 'debug'
@@ -109,7 +111,8 @@ function MessageBubble({ message }: { message: Message }) {
         <span>{message.role === 'user' ? '你' : 'AI'}</span>
         <span>{fmt(message.createdAt)}</span>
       </div>
-      <div className="msg-body">{message.content}</div>
+      <div className="msg-body">{visibleText(message.content)}</div>
+      <AttachmentView attachments={message.attachments} />
       {message.injectedMemoryIds.length > 0 && (
         <div className="msg-chips">
           {message.injectedMemoryIds.map((id) => (
@@ -324,7 +327,7 @@ export default function App() {
   const [rememberPin, setRememberPin] = useState(false)
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
-  const [streamBubbles, setStreamBubbles] = useState<string[]>([])
+  const [streamBubbles, setStreamBubbles] = useState<Array<{ text: string; attachments: MessageAttachment[] }>>([])
   const [injected, setInjected] = useState<{ id: string; kind: string; text: string }[]>([])
   const [debugQuery, setDebugQuery] = useState('')
   const [debugResult, setDebugResult] = useState<DebugResult | null>(null)
@@ -338,6 +341,7 @@ export default function App() {
   const [mindPreview, setMindPreview] = useState<MindPreview | null>(null)
   const [mindLoading, setMindLoading] = useState(false)
   const [graphOpen, setGraphOpen] = useState(false)
+  const [stickerOpen, setStickerOpen] = useState(false)
   const [toast, setToast] = useState<{ text: string; kind: ToastKind } | null>(null)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -444,9 +448,10 @@ export default function App() {
     }
   }
 
-  async function send(): Promise<void> {
+  async function send(attachments: MessageAttachment[] = []): Promise<void> {
     const text = input.trim()
-    if (session === null || text === '' || streaming) return
+    if (session === null || streaming) return
+    if (text === '' && attachments.length === 0) return
     const sid = session.id
     const temp: Message = {
       id: -Date.now(),
@@ -455,6 +460,7 @@ export default function App() {
       content: text,
       createdAt: new Date().toISOString(),
       injectedMemoryIds: [],
+      attachments,
     }
     setMessages((prev) => [...prev, temp])
     setInput('')
@@ -468,7 +474,7 @@ export default function App() {
       const response = await fetch(`/api/sessions/${sid}/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, attachments }),
       })
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as any
@@ -509,8 +515,10 @@ export default function App() {
               setBrief((prev) => (prev === null ? prev : { ...prev, text: payload.brief }))
             }
           } else if (event === 'bubble') {
-            if (typeof payload.text === 'string' && payload.text.trim() !== '') {
-              setStreamBubbles((prev) => [...prev, payload.text])
+            const bubbleText = typeof payload.text === 'string' ? payload.text : ''
+            const bubbleAttachments = Array.isArray(payload.attachments) ? payload.attachments : []
+            if (bubbleText !== '' || bubbleAttachments.length > 0) {
+              setStreamBubbles((prev) => [...prev, { text: bubbleText, attachments: bubbleAttachments }])
             }
           } else if (event === 'done') {
             if (payload.autoReflect === true || payload.autoExtract === true) {
@@ -917,12 +925,13 @@ export default function App() {
                   )}
                 </div>
               ) : (
-                streamBubbles.map((text, index) => (
-                  <div className="msg assistant" key={`${index}-${text.slice(0, 8)}`}>
+                streamBubbles.map((bubble, index) => (
+                  <div className="msg assistant" key={`${index}-${bubble.text.slice(0, 8)}`}>
                     <div className="msg-meta">
                       <span>AI</span>
                     </div>
-                    <div className="msg-body">{text}</div>
+                    <div className="msg-body">{bubble.text}</div>
+                    <AttachmentView attachments={bubble.attachments} />
                     {index === streamBubbles.length - 1 && injected.length > 0 && (
                       <div className="msg-chips">
                         {injected.map((item) => (
@@ -949,6 +958,19 @@ export default function App() {
         </div>
 
         <div className="composer">
+          {stickerOpen && (
+            <StickerPanel
+              onSticker={(attachment) => {
+                setStickerOpen(false)
+                void send([attachment])
+              }}
+              onPoke={() => {
+                setStickerOpen(false)
+                void send([{ type: 'poke' }])
+              }}
+              onClose={() => setStickerOpen(false)}
+            />
+          )}
           <textarea
             rows={2}
             placeholder={session === null ? '先新建一个会话' : '说点什么…（Enter 发送，Shift+Enter 换行）'}
@@ -963,6 +985,14 @@ export default function App() {
             }}
           />
           <div className="composer-actions">
+            <button
+              type="button"
+              className={stickerOpen ? 'ghost on' : 'ghost'}
+              onClick={() => setStickerOpen((value) => !value)}
+              disabled={session === null || streaming}
+            >
+              表情
+            </button>
             <button type="button" className="ghost" onClick={() => setRememberOpen(true)} disabled={session === null}>
               记住这条
             </button>

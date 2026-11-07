@@ -11,8 +11,10 @@
     "build": "vite build",
     "start": "tsx src/server/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/store.test.ts tests/mind.test.ts tests/maintenance.test.ts tests/chapter.test.ts tests/persona.test.ts tests/chat.test.ts tests/llm.test.ts",
+    "test": "node --import tsx --test tests/store.test.ts tests/mind.test.ts tests/maintenance.test.ts tests/chapter.test.ts tests/persona.test.ts tests/chat.test.ts tests/llm.test.ts tests/stickers.test.ts",
     "eval": "node --import tsx scripts/eval.mjs",
+    "import:stickers": "node --import tsx scripts/import-stickers.ts",
+    "make:stickers": "node --import tsx scripts/make-sample-stickers.ts",
     "migrate:voice": "node --import tsx scripts/revoice-memories.ts",
     "export:obsidian": "node --import tsx scripts/export-obsidian.ts"
   },

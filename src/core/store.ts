@@ -11,6 +11,7 @@ import type {
   MemoryKind,
   MemoryStatus,
   Message,
+  MessageAttachment,
   MindState,
   OpenLoop,
   OpenLoopKind,
@@ -20,6 +21,8 @@ import type {
   RelationshipEntry,
   RelationshipSnapshot,
   Session,
+  Sticker,
+  StickerPack,
   Thought,
   ThoughtKind,
 } from './types.ts'
@@ -92,6 +95,16 @@ function rowToSession(row: any): Session {
   }
 }
 
+function parseAttachments(raw: unknown): MessageAttachment[] {
+  if (typeof raw !== 'string' || raw === '') return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as MessageAttachment[]) : []
+  } catch {
+    return []
+  }
+}
+
 function rowToMessage(row: any): Message {
   return {
     id: Number(row.id),
@@ -100,6 +113,7 @@ function rowToMessage(row: any): Message {
     content: String(row.content),
     createdAt: String(row.created_at),
     injectedMemoryIds: parseStringIds(row.injected_memory_ids),
+    attachments: parseAttachments(row.attachments),
   }
 }
 
@@ -206,14 +220,15 @@ export function addMessage(
   role: Message['role'],
   content: string,
   injectedMemoryIds: string[] = [],
+  attachments: MessageAttachment[] = [],
 ): Message {
   const at = nowIso()
   const result = getDb()
     .prepare(
-      `INSERT INTO message(session_id, role, content, created_at, injected_memory_ids)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO message(session_id, role, content, created_at, injected_memory_ids, attachments)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .run(sessionId, role, content, at, JSON.stringify(injectedMemoryIds))
+    .run(sessionId, role, content, at, JSON.stringify(injectedMemoryIds), JSON.stringify(attachments))
   const id = Number(result.lastInsertRowid)
   const row = getDb().prepare('SELECT * FROM message WHERE id = ?').get(id) as any
   return rowToMessage(row)
@@ -1174,4 +1189,115 @@ export function lastMaintenance(personId = PERSON_ID): MaintenanceRun | undefine
     .prepare('SELECT * FROM maintenance_run WHERE person_id = ? ORDER BY at DESC, id DESC LIMIT 1')
     .get(personId) as any
   return row === undefined ? undefined : rowToMaintenance(row)
+}
+
+function rowToSticker(row: any): Sticker {
+  return {
+    id: String(row.id),
+    packId: String(row.pack_id),
+    packName: row.pack_name === undefined || row.pack_name === null ? undefined : String(row.pack_name),
+    name: String(row.name),
+    file: String(row.file),
+    tags: parseStringIds(row.tags),
+    note: String(row.note ?? ''),
+    sha256: String(row.sha256 ?? ''),
+    bytes: Number(row.bytes ?? 0),
+    width: Number(row.width ?? 0),
+    height: Number(row.height ?? 0),
+    createdAt: String(row.created_at),
+  }
+}
+
+export function createStickerPack(name: string, dir: string): StickerPack {
+  const id = `sp-${randomUUID().slice(0, 8)}`
+  const at = nowIso()
+  getDb()
+    .prepare('INSERT INTO sticker_pack(id, name, dir, created_at) VALUES (?, ?, ?, ?)')
+    .run(id, name, dir, at)
+  return { id, name, dir, createdAt: at, stickers: [] }
+}
+
+export function findStickerPackByName(name: string): StickerPack | undefined {
+  const row = getDb().prepare('SELECT * FROM sticker_pack WHERE name = ?').get(name) as any
+  return row === undefined ? undefined : { ...rowToPack(row), stickers: [] }
+}
+
+function rowToPack(row: any): Omit<StickerPack, 'stickers'> {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    dir: String(row.dir),
+    createdAt: String(row.created_at),
+  }
+}
+
+export function addSticker(input: {
+  packId: string
+  name: string
+  file: string
+  tags?: string[]
+  note?: string
+  sha256?: string
+  bytes?: number
+  width?: number
+  height?: number
+}): Sticker {
+  const id = `st-${randomUUID().slice(0, 8)}`
+  const at = nowIso()
+  getDb()
+    .prepare(
+      `INSERT INTO sticker(id, pack_id, name, file, tags, note, sha256, bytes, width, height, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.packId,
+      input.name,
+      input.file,
+      JSON.stringify(input.tags ?? []),
+      input.note ?? '',
+      input.sha256 ?? '',
+      input.bytes ?? 0,
+      input.width ?? 0,
+      input.height ?? 0,
+      at,
+    )
+  return getSticker(id)!
+}
+
+export function getSticker(id: string): Sticker | undefined {
+  const row = getDb()
+    .prepare('SELECT s.*, p.name AS pack_name FROM sticker s LEFT JOIN sticker_pack p ON p.id = s.pack_id WHERE s.id = ?')
+    .get(id) as any
+  return row === undefined ? undefined : rowToSticker(row)
+}
+
+export function findStickerBySha(sha256: string): Sticker | undefined {
+  if (sha256 === '') return undefined
+  const row = getDb()
+    .prepare('SELECT s.*, p.name AS pack_name FROM sticker s LEFT JOIN sticker_pack p ON p.id = s.pack_id WHERE s.sha256 = ?')
+    .get(sha256) as any
+  return row === undefined ? undefined : rowToSticker(row)
+}
+
+export function listStickerPacks(): StickerPack[] {
+  const packs = getDb()
+    .prepare('SELECT * FROM sticker_pack ORDER BY created_at ASC')
+    .all() as any[]
+  const stickers = getDb()
+    .prepare('SELECT * FROM sticker ORDER BY pack_id ASC, name ASC')
+    .all() as any[]
+  const byPack = new Map<string, Sticker[]>()
+  for (const row of stickers) {
+    const sticker = rowToSticker(row)
+    const list = byPack.get(sticker.packId) ?? []
+    list.push(sticker)
+    byPack.set(sticker.packId, list)
+  }
+  return packs.map((row) => ({ ...rowToPack(row), stickers: byPack.get(String(row.id)) ?? [] }))
+}
+
+export function countStickers(): number {
+  const row = getDb().prepare('SELECT COUNT(*) AS n FROM sticker').get() as any
+  return Number(row?.n ?? 0)
 }

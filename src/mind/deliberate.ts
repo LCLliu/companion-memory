@@ -31,6 +31,14 @@ const PlanSchema = z.object({
   tone: z.string().min(1).default('自然'),
   should_ask: z.boolean().default(false),
   question: z.string().optional().nullable(),
+  sticker: z
+    .object({
+      want: z.boolean().default(false),
+      reason: z.string().default(''),
+      hint: z.string().default(''),
+    })
+    .optional()
+    .nullable(),
   thought_summary: z.string().min(1).max(300),
   confidence: z.number().min(0).max(1).default(0.6),
 })
@@ -44,6 +52,7 @@ export interface DeliberationPlan {
   tone: string
   shouldAsk: boolean
   question: string | null
+  sticker: { want: boolean; reason: string; hint: string } | null
   thoughtSummary: string
   confidence: number
   model: string
@@ -56,6 +65,8 @@ export interface DeliberationInput {
   briefText: string
   mindState: MindState
   relationship: RelationshipEntry[]
+  stickerInventory: string
+  stickerContext: string
 }
 
 const SYSTEM = `你是这个 AI 伴侣的“内在思考层”。你的输出不会直接给用户看，只用于决定怎么回应。
@@ -67,6 +78,7 @@ const SYSTEM = `你是这个 AI 伴侣的“内在思考层”。你的输出不
 3. 给出 2–3 种回应策略，分别说明目标与风险。
 4. 选择一种策略；如果信息不足，选择“先问一句”。
 5. 写一句 thought_summary（不超过 80 字），只写结论，不写推理过程。
+6. 顺手感觉一下 sticker：这一刻你自己有没有想甩一张表情给他。想发就 want=true，reason 写你为什么想发，hint 描述你想要的那个画面或感觉（例：“瘫在地上不动的那只”“嫌弃地斜一眼”）；不想发就 want=false 或者干脆不写这个字段。这一步只看你自己的想法，不要因为有得发就发。
 
 硬规则：
 - 只使用 <memory> 里出现过的记忆；没有证据就不要声称记得。
@@ -90,6 +102,7 @@ JSON 结构：
   "tone": "温和、简短",
   "should_ask": true,
   "question": "你是想让我听着，还是一起想想办法？",
+  "sticker": { "want": true, "reason": "他说累，我想让他笑一下", "hint": "瘫在地上不动的那只" },
   "thought_summary": "她可能只是想被听见，先别急着给方案。",
   "confidence": 0.75
 }`
@@ -124,9 +137,13 @@ export async function deliberatePlan(
       `arousal=${input.mindState.moodArousal.toFixed(2)} energy=${input.mindState.energy.toFixed(2)}\n` +
       `关注：${input.mindState.attention || '（无）'}\n担心：${input.mindState.currentConcern || '（无）'}`,
     `【关系】\n${formatRelationship(input.relationship)}`,
+    input.stickerInventory === '' ? '' : `【你的手机里】\n${input.stickerInventory}`,
+    input.stickerContext === '' ? '' : `【他刚发的表情】\n${input.stickerContext}`,
     `【最近对话】\n${formatRecent(input.recent)}`,
     `【记忆】\n${truncate(input.memoryBlock, 1600) || '（暂无）'}`,
-  ].join('\n\n')
+  ]
+    .filter((block) => block !== '')
+    .join('\n\n')
 
   const result = await completeJson(
     [
@@ -152,6 +169,14 @@ export async function deliberatePlan(
       tone: parsed.tone,
       shouldAsk: parsed.should_ask,
       question: parsed.question?.trim() || null,
+      sticker:
+        parsed.sticker === undefined || parsed.sticker === null
+          ? null
+          : {
+              want: parsed.sticker.want,
+              reason: truncate(parsed.sticker.reason, 80),
+              hint: truncate(parsed.sticker.hint, 60),
+            },
       thoughtSummary: truncate(parsed.thought_summary, 200),
       confidence: parsed.confidence,
       model: result.model,

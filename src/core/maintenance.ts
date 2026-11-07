@@ -24,7 +24,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-function tokenSet(text: string): Set<string> {
+export function tokenSet(text: string): Set<string> {
   const normalized = text.toLowerCase()
   const tokens = new Set<string>()
   for (const match of normalized.matchAll(/[a-z0-9]{2,}/g)) tokens.add(match[0])
@@ -41,7 +41,7 @@ function tokenSet(text: string): Set<string> {
   return tokens
 }
 
-function dice(a: Set<string>, b: Set<string>): number {
+export function dice(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0
   let intersection = 0
   for (const token of a) if (b.has(token)) intersection += 1

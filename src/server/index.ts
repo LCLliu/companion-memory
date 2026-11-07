@@ -1,7 +1,8 @@
 import 'dotenv/config'
 import Fastify from 'fastify'
 import fastifyStatic from '@fastify/static'
-import { existsSync } from 'node:fs'
+import { existsSync, createReadStream, statSync } from 'node:fs'
+import { resolve, sep, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getDbPath } from '../core/db.ts'
 import { buildBrief, buildMemoryContext, buildSystemPrompt } from '../core/inject.ts'
@@ -55,6 +56,18 @@ import {
   updateMindState,
 } from '../core/store.ts'
 import { buildBrainGraph } from '../core/brain.ts'
+import { listStickerPacks } from '../core/store.ts'
+import {
+  resolveStickerRefs,
+  describeAttachments,
+  describeCapability,
+  describeDesire,
+  describeInventory,
+  describeTurn,
+  mediaUrl,
+  MEDIA_ROOT,
+  parseMarkers,
+} from '../mind/stickers.ts'
 import { runMaintenance } from '../core/maintenance.ts'
 import { generateChapter } from '../mind/chapter.ts'
 import { splitBubbles } from '../mind/chat-format.ts'
@@ -170,11 +183,15 @@ app.post('/api/sessions/:id/extract', async (request, reply) => {
 
 app.post('/api/sessions/:id/chat', async (request, reply) => {
   const { id } = request.params as { id: string }
-  const body = (request.body ?? {}) as { message?: string }
+  const body = (request.body ?? {}) as {
+    message?: string
+    attachments?: Array<{ type?: string; stickerId?: string }>
+  }
   const text = (body.message ?? '').trim()
+  const incoming = Array.isArray(body.attachments) ? body.attachments : []
   const session = getSession(id)
   if (session === undefined) return reply.code(404).send({ ok: false, message: '会话不存在' })
-  if (text === '') return reply.code(400).send({ ok: false, message: '消息不能为空' })
+  if (text === '' && incoming.length === 0) return reply.code(400).send({ ok: false, message: '消息不能为空' })
   if (text.length > 4000) return reply.code(400).send({ ok: false, message: '消息过长（上限 4000 字）' })
   if (!isKeyConfigured()) {
     return reply.code(400).send({
@@ -183,9 +200,19 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
     })
   }
 
+  const userAttachments = [
+    ...resolveStickerRefs(
+      incoming
+        .filter((item) => item?.type !== 'poke' && typeof item?.stickerId === 'string')
+        .map((item) => item!.stickerId as string),
+    ),
+    ...(incoming.some((item) => item?.type === 'poke') ? [{ type: 'poke' as const }] : []),
+  ]
+  const turnText = text === '' ? describeTurn(userAttachments) : text
+
   const priorUserMessages = countUserMessages(id)
   const followUp = priorUserMessages === 0 ? (listDueIntentions(session.personId)[0] ?? null) : null
-  const userMessage = addMessage(id, 'user', text)
+  const userMessage = addMessage(id, 'user', turnText, [], userAttachments)
   const brief = buildBrief(session.personId)
   const topK = Math.max(1, Number(process.env.RECALL_TOP_K ?? 3))
   // 多取几条再剔除“简报里已经有的”，避免置顶记忆占掉 topK 的名额。
@@ -211,6 +238,8 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
   const mode = mindMode()
   const mindState = getMindState(session.personId)
   const route = routeMessage(text, mindState)
+  const stickerInventory = describeInventory()
+  const stickerContext = describeAttachments(userAttachments)
   const deliberationInput = {
     percept: route.percept,
     recent: history.map((message) => ({
@@ -221,6 +250,8 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
     briefText: brief.text,
     mindState,
     relationship: brief.relationship,
+    stickerInventory,
+    stickerContext,
   }
 
   let plan: DeliberationPlan | null = null
@@ -248,7 +279,20 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
   const baseSystem = mode === 'off'
     ? buildSystemPrompt(memoryBlock.text)
     : buildMindSystemPrompt(memoryBlock.text, mindState, plan)
-  const system = followUp === null ? baseSystem : `${baseSystem}\n\n${buildFollowUpExtra(followUp)}`
+  const stickerExtra = [
+    describeAttachments(userAttachments),
+    describeDesire(plan?.sticker),
+    describeCapability(),
+  ]
+    .filter((part) => part !== '')
+    .join('\n\n')
+  const system = [
+    baseSystem,
+    followUp === null ? '' : buildFollowUpExtra(followUp),
+    stickerExtra,
+  ]
+    .filter((part) => part !== '')
+    .join('\n\n')
   const messages: ChatMsg[] = [
     { role: 'system', content: system },
     ...history.map((message) => ({
@@ -340,19 +384,29 @@ app.post('/api/sessions/:id/chat', async (request, reply) => {
     const bubbles = splitBubbles(full)
     const assistants: Message[] = []
     for (const [index, bubble] of bubbles.entries()) {
+      const parsed = parseMarkers(bubble)
+      if (parsed.text === '' && parsed.attachments.length === 0) continue
       const assistantMessage = addMessage(
         id,
         'assistant',
-        bubble,
-        index === 0 ? memoryBlock.injectedIds : [],
+        parsed.text,
+        assistants.length === 0 ? memoryBlock.injectedIds : [],
+        parsed.attachments,
       )
       assistants.push(assistantMessage)
-      send('bubble', { text: bubble, index, id: assistantMessage.id })
+      send('bubble', {
+        text: parsed.text,
+        attachments: parsed.attachments,
+        index: assistants.length - 1,
+        id: assistantMessage.id,
+      })
       if (index < bubbles.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 220))
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 220))
       }
     }
-    const assistant = assistants[assistants.length - 1]!
+    const assistant = assistants.length > 0
+      ? assistants[assistants.length - 1]!
+      : addMessage(id, 'assistant', full, memoryBlock.injectedIds, [])
     const turnCount = countUserMessages(id)
     const autoExtract = turnCount % EXTRACT_EVERY === 0
     send('done', {
@@ -561,6 +615,36 @@ app.get('/api/brain', async (request) => {
       includeInner: query.inner !== '0',
     }),
   }
+})
+
+const IMAGE_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+}
+
+app.get('/api/stickers', async () => ({
+  ok: true,
+  packs: listStickerPacks().map((pack) => ({
+    ...pack,
+    stickers: pack.stickers.map((sticker) => ({ ...sticker, url: mediaUrl(sticker.file) })),
+  })),
+}))
+
+app.get('/media/stickers/*', async (request, reply) => {
+  const relative = decodeURIComponent((request.params as Record<string, string>)['*'] ?? '')
+  const target = resolve(MEDIA_ROOT, relative)
+  if (relative === '' || !target.startsWith(MEDIA_ROOT + sep)) {
+    return reply.code(403).send({ ok: false, message: '路径不合法' })
+  }
+  if (!existsSync(target)) return reply.code(404).send({ ok: false, message: '表情图片不存在' })
+  return reply
+    .code(200)
+    .header('content-type', IMAGE_TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream')
+    .header('cache-control', 'public, max-age=86400')
+    .send(createReadStream(target))
 })
 
 app.post('/api/chapter/generate', async (_request, reply) => {

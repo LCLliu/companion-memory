@@ -210,8 +210,30 @@ CREATE TABLE IF NOT EXISTS maintenance_run (
   report TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_memory_person_status ON memory(person_id, status);
-CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory(kind);
+CREATE TABLE IF NOT EXISTS sticker_pack (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  dir TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sticker (
+  id TEXT PRIMARY KEY,
+  pack_id TEXT NOT NULL REFERENCES sticker_pack(id),
+  name TEXT NOT NULL,
+  file TEXT NOT NULL,
+  tags TEXT NOT NULL DEFAULT '[]',
+  note TEXT NOT NULL DEFAULT '',
+  sha256 TEXT NOT NULL DEFAULT '',
+  bytes INTEGER NOT NULL DEFAULT 0,
+  width INTEGER NOT NULL DEFAULT 0,
+  height INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sticker_pack ON sticker(pack_id);
+CREATE INDEX IF NOT EXISTS idx_sticker_sha ON sticker(sha256);
+CREATE INDEX IF NOT EXISTS idx_memory_person_status ON memory(person_id, status);CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory(kind);
 CREATE INDEX IF NOT EXISTS idx_memory_pinned ON memory(pinned);
 CREATE INDEX IF NOT EXISTS idx_message_session ON message(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_open_loop_person_status ON open_loop(person_id, status);
@@ -238,6 +260,7 @@ function migrate(database: DatabaseSync): void {
   ensureColumn(database, 'memory', 'source_thought_id', 'TEXT')
   ensureColumn(database, 'intention', 'last_surfaced_at', 'TEXT')
   ensureColumn(database, 'intention', 'surface_count', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(database, 'message', 'attachments', "TEXT NOT NULL DEFAULT '[]'")
 }
 
 function seed(database: DatabaseSync): void {

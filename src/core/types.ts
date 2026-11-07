@@ -38,6 +38,40 @@ export interface Message {
   content: string
   createdAt: string
   injectedMemoryIds: string[]
+  attachments: MessageAttachment[]
+}
+
+export interface MessageAttachment {
+  type: 'sticker' | 'poke'
+  stickerId?: string
+  name?: string
+  file?: string
+  pack?: string
+  tags?: string[]
+}
+
+export interface Sticker {
+  id: string
+  packId: string
+  packName?: string
+  name: string
+  file: string
+  url?: string
+  tags: string[]
+  note: string
+  sha256: string
+  bytes: number
+  width: number
+  height: number
+  createdAt: string
+}
+
+export interface StickerPack {
+  id: string
+  name: string
+  dir: string
+  createdAt: string
+  stickers: Sticker[]
 }
 
 export interface Memory {
